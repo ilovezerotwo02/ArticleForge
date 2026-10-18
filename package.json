@@ -16,7 +16,9 @@
     "icon": "node scripts/make-icon.mjs",
     "build:win": "electron-builder --win portable",
     "build:dir": "electron-builder --win dir",
-    "build:installer": "electron-builder --win nsis"
+    "build:installer": "electron-builder --win nsis",
+    "vendor": "node scripts/copy-vendor.mjs",
+    "build": "electron-builder --win portable"
   },
   "dependencies": {
     "@mozilla/readability": "^0.5.0",
@@ -78,5 +80,9 @@
       "shortcutName": "ArticleForge",
       "artifactName": "ArticleForge-${version}-setup.exe"
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ilovezerotwo02/ArticleForge.git"
   }
 }

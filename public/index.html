@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ArticleForge · 文章转换与知识沉淀</title>
+<link rel="stylesheet" href="/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%234f46e5'/><path d='M28 72V28h20c12 0 19 6 19 15 0 6-3 11-9 13 7 2 11 7 11 14 0 10-8 17-21 17H28zm12-9h10c6 0 9-3 9-8s-3-8-9-8H40v16zm0-25h8c5 0 8-2 8-7s-3-7-8-7h-8v14z' fill='white'/></svg>">
+</head>
+<body>
+<div class="app">
+  <!-- 图标导航 -->
+  <nav class="rail">
+    <div class="rail-logo">AF</div>
+    <button class="rail-btn active" data-view="convert" title="转换">
+      <svg viewBox="0 0 24 24"><path d="M4 4h10l6 6v10H4z"/><path d="M14 4v6h6"/></svg><span>转换</span>
+    </button>
+    <button class="rail-btn" data-view="search" title="检索">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg><span>检索</span>
+    </button>
+    <button class="rail-btn" data-view="watch" title="监控">
+      <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 7h18s-3 0-3-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span>监控</span>
+    </button>
+    <button class="rail-btn" data-view="knowledge" title="知识库">
+      <svg viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/></svg><span>知识库</span>
+    </button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" data-view="settings" title="设置">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg><span>设置</span>
+    </button>
+  </nav>
+
+  <!-- 资料库列表 -->
+  <aside class="list-pane" id="listPane">
+    <div class="pane-head">
+      <div class="pane-title">资料库 <span class="count" id="libCount">0</span></div>
+      <button class="icon-btn" id="refreshLib" title="刷新">
+        <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+      </button>
+    </div>
+    <div class="url-box">
+      <input id="urlInput" type="text" placeholder="粘贴微信 / 网页文章链接…" spellcheck="false">
+      <button class="btn primary" id="fetchBtn">抓取</button>
+    </div>
+    <div class="url-actions">
+      <label class="mini-check"><input type="checkbox" id="forceRender"> 强制浏览器渲染（SPA / 反爬页）</label>
+      <button class="link-btn" id="uploadBtn">
+        <svg viewBox="0 0 24 24"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 17v3h16v-3"/></svg>
+        上传 DOCX / MD / PDF
+      </button>
+      <input type="file" id="fileInput" multiple accept=".docx,.md,.markdown,.pdf,.txt,.html" hidden>
+    </div>
+    <div class="list-search">
+      <input id="libFilter" type="text" placeholder="筛选标题 / 公众号…">
+    </div>
+    <div class="article-list" id="articleList"></div>
+  </aside>
+
+  <!-- 主区域 -->
+  <main class="main">
+    <header class="topbar">
+      <div class="doc-title" id="docTitle">未选择文章</div>
+      <div class="topbar-actions" id="topbarActions"></div>
+    </header>
+    <div class="view-tabs" id="viewTabs" hidden>
+      <button class="tab active" data-tab="preview">排版预览</button>
+      <button class="tab" data-tab="markdown">Markdown</button>
+      <button class="tab" data-tab="outline">大纲结构</button>
+      <button class="tab" data-tab="related">相关文章</button>
+      <div class="tabs-spacer"></div>
+      <span class="zoom-hint">在正文中选中文字即可划词提问</span>
+    </div>
+
+    <section class="view" id="viewConvert">
+      <div class="empty" id="emptyState">
+        <div class="empty-art">
+          <svg viewBox="0 0 120 120"><rect x="18" y="14" width="62" height="80" rx="8" fill="#eef2ff" stroke="#c7d2fe"/><path d="M30 34h38M30 46h38M30 58h26" stroke="#a5b4fc" stroke-width="3" stroke-linecap="round"/><circle cx="82" cy="82" r="22" fill="#4f46e5"/><path d="M82 72v20M72 82h20" stroke="#fff" stroke-width="4" stroke-linecap="round"/></svg>
+        </div>
+        <h2>把任意文章，变成可归档的知识</h2>
+        <p>粘贴微信链接自动重建标题层级与代码框，或上传 DOCX / MD / PDF，交给 AI 按你的格式整理并写入你的知识库。</p>
+        <div class="empty-tips">
+          <span>✓ 正文/图片/排版完整保留</span><span>✓ PDF · DOCX · MD</span><span>✓ 划词提问</span><span>✓ 全网检索与监控</span>
+        </div>
+      </div>
+      <div class="preview-wrap" id="previewWrap" hidden>
+        <iframe id="previewFrame" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
+        <div class="preview-empty" id="previewEmpty" hidden>
+          <div class="pe-title">正文没有加载出来</div>
+          <div class="pe-sub">可能是网络被拦、原站不允许内嵌显示，或该文章正文为空</div>
+          <div class="pe-actions">
+            <button class="btn sm primary" id="reloadPreview">重新加载</button>
+            <a class="btn sm" id="openPreviewTab" href="#" target="_blank" rel="noreferrer">在浏览器中打开</a>
+          </div>
+        </div>
+        <div class="md-view" id="mdView" hidden><pre id="mdSource"></pre></div>
+        <div class="outline-view" id="outlineView" hidden></div>
+        <div class="related-view" id="relatedView" hidden></div>
+      </div>
+    </section>
+
+    <section class="view" id="viewSearch" hidden>
+      <div class="page-head">
+        <h1>全网检索</h1>
+        <p>按关键词搜索微信/网页文章，一键抓取转换后进入资料库。</p>
+      </div>
+      <div class="search-bar">
+        <input id="searchInput" type="text" placeholder="例如：内存取证 volatility 教程">
+        <select id="searchSource">
+          <option value="all" selected>全部来源</option>
+          <option value="wechat">微信公众号</option>
+          <option value="web">网页</option>
+        </select>
+        <select id="searchTime">
+          <option value="" selected>不限时间</option>
+          <option value="day">24 小时内</option>
+          <option value="week">一周内</option>
+          <option value="month">一个月内</option>
+          <option value="year">一年内</option>
+        </select>
+        <select id="searchSort">
+          <option value="relevance" selected>按相关度</option>
+          <option value="time">按时间</option>
+        </select>
+        <button class="btn primary" id="searchBtn">搜索</button>
+      </div>
+      <div class="search-results" id="searchResults"></div>
+    </section>
+
+    <section class="view" id="viewWatch" hidden>
+      <div class="page-head">
+        <h1>内容监控</h1>
+        <p>定时检索关键词，发现新文章立即提醒；一键把新内容收进资料库。</p>
+      </div>
+      <div class="search-bar">
+        <input id="watchInput" type="text" placeholder="监控关键词，如：内存取证 靶场">
+        <select id="watchInterval">
+          <option value="15">每 15 分钟</option>
+          <option value="30" selected>每 30 分钟</option>
+          <option value="60">每 1 小时</option>
+          <option value="180">每 3 小时</option>
+          <option value="720">每 12 小时</option>
+        </select>
+        <label class="mini-check"><input type="checkbox" id="watchWechat" checked> 只看公众号</label>
+        <button class="btn primary" id="addWatchBtn">添加监控</button>
+      </div>
+      <div class="watch-list" id="watchList"></div>
+    </section>
+
+    <section class="view" id="viewKnowledge" hidden>
+      <div class="page-head">
+        <h1>知识库</h1>
+        <p>支持 Obsidian / Logseq / 思源 / Notion / 任意 Markdown 目录；概念笔记自动建链，避免重复。</p>
+      </div>
+      <div class="knowledge-grid">
+        <div class="card" id="vaultCard"></div>
+        <div class="card" id="presetCard"></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-head"><h3>最近写入</h3><button class="link-btn" id="scanVaultBtn">重新扫描</button></div>
+        <div id="vaultNotes" class="note-list"></div>
+      </div>
+    </section>
+
+    <section class="view" id="viewSettings" hidden>
+      <div class="page-head">
+        <h1>设置</h1>
+        <p>AI 走 OpenAI 兼容协议，DeepSeek / Kimi / 通义 / OpenAI / 本地 Ollama 均可。</p>
+      </div>
+      <div class="settings-grid" id="settingsGrid"></div>
+    </section>
+  </main>
+
+  <!-- AI 侧栏 -->
+  <aside class="ai-pane" id="aiPane">
+    <div class="ai-head">
+      <div class="ai-title">
+        <span class="ai-dot" id="aiDot"></span> AI 阅读助手
+        <span class="ai-model" id="aiModel">未配置</span>
+      </div>
+      <button class="icon-btn" id="clearChat" title="清空对话">
+        <svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>
+      </button>
+    </div>
+    <div class="ai-context" id="aiContext" hidden>
+      <div class="ctx-label">已引用选区</div>
+      <div class="ctx-text" id="ctxText"></div>
+      <button class="ctx-close" id="ctxClose">×</button>
+    </div>
+    <div class="chat" id="chat"></div>
+    <div class="quick-asks" id="quickAsks">
+      <button data-q="用三句话总结这篇文章">总结全文</button>
+      <button data-q="这篇文章的核心知识点有哪些？按重要程度排序">提炼知识点</button>
+      <button data-q="把文中的命令和代码解释一遍，说明每个参数的作用">解释代码</button>
+      <button data-q="这篇文章有哪些值得深挖的方向？给出下一步学习路径">深挖方向</button>
+    </div>
+    <div class="composer">
+      <textarea id="composer" rows="1" placeholder="就这篇文章提问…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <button class="send-btn" id="sendBtn" title="发送">
+        <svg viewBox="0 0 24 24"><path d="M4 12 20 4l-6 16-3-7z"/></svg>
+      </button>
+    </div>
+    <div class="ai-foot">
+      <button class="ghost-btn" id="organizeBtn">AI 整理并入库</button>
+      <span class="ai-hint" id="aiHint">未打开文章</span>
+    </div>
+  </aside>
+</div>
+
+<!-- 划词浮条 -->
+<div class="sel-toolbar" id="selToolbar" hidden>
+  <button data-act="add">添加到对话</button>
+  <button data-act="ask">在侧边聊天中提问</button>
+</div>
+
+<!-- 弹窗容器 -->
+<div class="modal-mask" id="modalMask" hidden>
+  <div class="modal" id="modal"></div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+<script src="/vendor/marked/marked.umd.js"></script>
+<script src="/vendor/katex/katex.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

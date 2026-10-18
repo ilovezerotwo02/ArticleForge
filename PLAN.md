@@ -1,0 +1,202 @@
+# ArticleForge · 技术方案与模块划分
+
+> 版本 v1.0 ｜ 目标：微信/网页文章 → PDF / DOCX / Markdown 高质量转换 + AI 阅读侧栏 + 全网检索监控 + Obsidian 知识沉淀
+
+## 1. 总体思路
+
+一句话：**"先结构化，再排版，最后按目标格式生成"**。
+
+绝大多数同类工具失败在"直接拿网页 HTML 套模板导出"——微信文章的 HTML 是 Word 粘贴产物（全内联样式、无 heading、代码是纯文本行、图片带防盗链），直接扔进 PDF/DOCX 必然乱。所以本项目拆成四段流水线：
+
+```
+URL ──抓取──▶ 原始 HTML ──语义重建──▶ 归一化 Article 模型 ──▶ 三套渲染器 ──▶ PDF / DOCX / MD
+                                                │
+                                                ├──▶ 预览（浏览器实时渲染）
+                                                ├──▶ AI 侧栏（按块/按选区取上下文）
+                                                └──▶ 知识点抽取 ──▶ Obsidian Vault
+```
+
+`Article` 模型是一切的中心：
+
+```json
+{
+  "id": "hash", "url": "...", "title": "...", "author": "...", "account": "...",
+  "publishedAt": "...", "cover": "/media/xx/cover.jpg", "source": "wechat|web",
+  "blocks": [{"type":"h2|p|code|img|list|quote|table","...": "..."}],
+  "html": "归一化后的语义 HTML", "markdown": "...", "text": "纯文本",
+  "assets": [{"url":"...","file":"data/media/xx/1.jpg","width":900}]
+}
+```
+
+好处：PDF / DOCX / MD 三种输出共享同一份"正确的内容"，格式差异只在渲染层解决；AI 也能拿到干净的纯文本与块索引做引用。
+
+## 2. 模块划分
+
+| 层 | 模块 | 职责 |
+|---|---|---|
+| 抓取 | `fetchPage.js` | 普通 fetch（带 UA/Referer）优先；SPA / 反爬页回落到 Edge 无头渲染（puppeteer-core 复用本机 Edge，不下载 Chromium） |
+| 抓取 | `extract.js` | 微信专用抽取（`#js_content` / `#activity-name` / `#js_name` / `#publish_time`）+ 通用 Readability 兜底 |
+| 归一化 | `sanitize.js` | 白名单清洗、去广告/二维码/关注卡片、span 扁平化、样式→语义标签映射 |
+| 归一化 | `headings.js` | **标题层级推断**：字号/字重/长度/编号模式/关键词打分 → h1~h4，并修复跳级 |
+| 归一化 | `codeblocks.js` | **代码块识别与合并**：`pre` 直取 + 纯文本行启发式（提示符/符号密度/等宽/缩进）→ 合并成块 + 语言识别 → 代码框结构 |
+| 归一化 | `images.js` | 图片本地化（带 Referer 破防盗链）、尺寸探测、去 1px 追踪图 |
+| 渲染 | `render/readingHtml.js` | 阅读版 HTML（预览 + PDF 共用），代码框 / 表格 / 引用 / 图片样式齐全，A4 打印规则 |
+| 渲染 | `render/docxModel.js` | 块模型 → docx 元素（代码块 = 单格底纹表格 + 等宽字体 + 边框，图片按原始宽高比缩放） |
+| 导出 | `exporters/{pdf,docx,markdown}.js` | PDF=Puppeteer `printBackground` A4；DOCX=`docx` 库程序化生成；MD=Turndown + GFM + frontmatter |
+| 检索 | `search.js` | Provider 抽象：Bing 网页 / 搜狗微信 / Tavily（可选 Key），统一结果模型 |
+| 监控 | `watch.js` | 定时轮询检索关键词，URL 去重 diff，新条目 → SSE 推送 + 桌面通知 |
+| AI | `ai.js` | OpenAI 兼容协议流式客户端（DeepSeek/Kimi/OpenAI/Ollama 均可），SSE 转发；划词问答、连续追问、知识点 JSON 抽取 |
+| 知识库 | `obsidian.js` | 主题笔记（YAML frontmatter + 双链 + 知识点）+ 概念笔记去重 + MOC 索引追加 |
+| 服务 | `server.js` + `routes/` | REST + SSE，静态资源 / 导出文件下载，JSON 文件持久化（零原生依赖，免装数据库） |
+| 前端 | `public/` | 三栏界面：资料库 / 预览+导出 / AI 侧栏；划词浮条（添加到对话、在侧边聊天中提问） |
+
+## 3. 技术选型与理由
+
+| 选择 | 理由 | 备选与否决原因 |
+|---|---|---|
+| Node.js 22 + Express | 生态全、单进程管抓取/渲染/导出；前后端同语言 | Python(FastAPI) 也可，但 PDF/DOCX 一致性要再引一套工具链 |
+| puppeteer-core + 本机 Edge | 免下载 150MB Chromium；Edge 一定存在；同一浏览器兼做"渲染抓取"和"PDF 打印" | playwright 体积大；wkhtmltopdf 对现代 CSS 支持差 |
+| jsdom + Readability | 纯 JS 解析，无原生编译；Readability 处理通用网页足够稳 | cheerio 不带 DOM 布局信息，标题推断缺字号 |
+| 自研归一化 | 微信场景没有现成库能解决"无 h 标签 + 代码是纯文本" | 现成 readability 只给粗粒度正文，不会重建层级 |
+| 块模型 + `docx` 库 | 精确控制代码框底纹/边框/等宽、图片尺寸、页边距；比 HTML→DOCX 稳 | html-to-docx 对 `pre`/背景色支持不稳定，容易样式丢失 |
+| Turndown + GFM | Markdown 事实标准，表格/删除线插件齐全 | 手写转换难覆盖嵌套 |
+| JSON 文件持久化 | 零运维、可读、备份即复制；个人工具量级足够 | SQLite 需 better-sqlite3 原生编译，Windows 上易翻车 |
+| OpenAI 兼容协议 | 一套代码接 DeepSeek/Kimi/通义/OpenAI/本地 Ollama | 各厂商 SDK 会把用户锁死 |
+
+## 4. 关键难点与解法
+
+1. **微信"伪排版"**：正文是 `<p><span style="font-size:11pt;font-weight:normal">` 堆出来的，标题只是加粗短句。
+   → 用"字号 × 字重 × 行长 × 结尾标点 × 编号模式 × 关键词"打分，而不是看标签名；推断后统一重排层级、压平跳级（h2→h4 改为 h2→h3）。
+2. **代码块在微信里是纯文本行**：没有 `<pre>`。示例文章就是这种情况（命令行混在段落里）。
+   → 行级分类器：等宽字体 / 符号密度 ≥ 阈值 / 提示符 `$ # PS> C:\>` / 工具名白名单（vol.py、python、pip、git…）/ 无中文长句 → 判定为代码行；连续代码行 + 空行保留合并为一个块，再做语言识别（bash/powershell/python/js/sql…）并输出带"代码框"的 HTML（标题栏 + 语言标签 + 行号可选 + 复制按钮）。
+3. **图片防盗链**：`mmbiz.qpic.cn` 校验 Referer，PDF 打印时若直连会空白。
+   → 服务端带 `Referer: https://mp.weixin.qq.com/` 下载到本地 `data/media/<id>/`，HTML/MD/DOCX 全部引用本地文件，离线可看、可打包。
+4. **PDF 分页断裂**：长代码块、大图、表格跨页被切开。
+   → `break-inside: avoid` + 代码块超长时才允许切分、`thead` 重复、标题 `break-after: avoid`、页脚页码。
+5. **DOCX 与网页渲染差异**：浏览器 CSS 在 Word 里基本失效。
+   → 不走 HTML 转换，直接把块模型映射成 docx 元素；代码块用"单元格底纹 + 细边框 + Consolas"模拟代码框，保证在 Word 里也"有框"。
+6. **划词问答的上下文**：只发选区，AI 会答偏；全发全文，token 爆炸。
+   → 选区 + 命中段落前后 2 段 + 文章标题/大纲摘要，块级锚点 `#b12`，回答里可回链到原文位置。
+7. **监控的重复与频控**：同一篇文章被不同搜索源反复命中。
+   → URL 规范化（去 utm/去尾部参数）+ 标题相似度去重 + 每任务独立 `seen` 集合 + 最小间隔限速。
+8. **Obsidian 双链与重复笔记**：`[[机器学习]]` 与 `[[机器学习 ]]`、大小写、别名会分裂图谱。
+   → 写入前扫描 vault 全部 md 文件名，建"规范化名 → 真实文件名"索引；命中则复用原名，未命中才新建概念笔记；主题笔记按"来源 URL 哈希"判重，重复则更新而非新建。
+
+## 5. 补充模块：文档上传 → AI 按格式整理 → 入知识库
+
+在最初版本之外追加的需求（上传 DOCX / MD / PDF 让 AI 整理进知识库，并要求用户可控格式），落地方案：
+
+```
+上传文件 ──格式识别──▶ 解析器 ──▶ 统一 Article 模型 ──▶ AI 整理（受格式规约约束）──▶ Obsidian
+             │                                      │
+             ├─ DOCX: mammoth → 保留标题/列表/表格/内嵌图
+             ├─ MD:   剥离 frontmatter（复用 title/source）+ marked/GFM
+             └─ PDF:  pdfjs 抽取 → 按字号推标题、按行距切段、命令行识别
+```
+
+**格式可控的实现方式**：不把"格式要求"当普通提示词，而是拆成三层结构写进 system prompt：
+
+1. **模板层**：6 个预设（学习笔记 / 概念卡片 / 实操教程 / 问答 / 对比 / 时间线）+ 每层的组织指令
+2. **参数层**：详细程度、语言、知识点上限、是否保留代码/引用/原文、是否建概念笔记
+3. **自由层**：用户自定义格式要求（标记为最高优先级）+ 用户手写的笔记骨架（要求严格按结构填充）
+
+模型被要求返回结构化 JSON（title/summary/tags/markdown/points/concepts），其中 `points[].relations` 直接作为双链来源；`markdown` 是最终笔记正文。写入前扫描 vault 建立"规范化文件名 → 真实文件"索引，命中即复用，避免概念笔记重复与双链断裂。
+
+**入口一致性**：上传文档与网页文章共用同一个 `Article` 模型与同一套预览/导出/AI 流程，只是 `source: 'upload'`，因此不存在"两套逻辑"的维护成本。
+
+## 6. 知识库不绑定 Obsidian：适配器层
+
+需求：用户不一定用 Obsidian，可能是 Logseq / 思源 / Notion / 任意 Markdown 目录。做法是把「写笔记」抽象成一组适配器，AI 整理逻辑完全不变。
+
+```
+organizeKnowledge() ──► organized {title,summary,tags,markdown,points,concepts}
+                              │
+                     kb/index.js 按 settings.kb.destination 分发
+        ┌──────────┬──────────┼───────────┬──────────┬───────────┐
+    obsidian     logseq     folder      siyuan      notion
+   vault+双链   pages+属性  纯 md 目录   本地 API     REST API
+```
+
+统一接口（每个适配器都实现）：
+
+- `status()` 配置是否就绪、目标展示
+- `test()` 真写一次：目录可写 / 思源能列笔记本 / Notion 能读数据库
+- `write({source, organized, rawText, options})` 返回 `{relativeNote, conceptsCreated, url...}`
+- `list(limit)` 最近笔记（API 型用 SQL / query 接口）
+
+差异化处理：
+
+- **文件型**共用 `buildMainMarkdown()`：frontmatter / 引用块 / 双链 / 原文折叠块按需开关，文件名冲突自动加后缀
+- **Logseq** 把 Markdown 转成大纲块（`- ## 标题`、代码缩进成块），属性写成 `key:: value`
+- **思源** 走 `createDocWithMd`，再把 `[[概念]]` 用建文档返回的 id 或 SQL 查到的 id 替换成 `((id '文本'))` 块引用
+- **Notion** 把 Markdown 转成 block（heading / list / code / quote / divider），标题标签进数据库属性，概念作为子页面
+
+写入历史落在 `data/kb-history.json`，API 型知识库的「最近写入」也能在界面回看。
+
+## 7. 第三轮：检索可信度、整理预览、目录路由
+
+**检索**
+- 多源并行：公众号（搜狗微信）+ 网页（DuckDuckGo，可切 Bing/Tavily），合并去重
+- 时间：不限 / 24h / 一周 / 一月 / 一年；排序：相关度 / 时间倒序
+- 踩坑：搜狗的指纹校验会拦带 `Edg/` 的 UA（必须用 Chrome UA）；`tsn` 参数会让结果直接为空，时间过滤改在本地按发布日期做；DDG 对 Chrome UA 返回 202 挑战页，换 Firefox UA 正常
+- 反爬兜底：会话 Cookie 预热 + 反爬时清空会话重试一次 + 3 分钟结果缓存
+- 公众号结果里的 `/link?url=` 在搜索时即解析成真实 mp 地址；过期则转换阶段用「同会话 Cookie + 解析 `url +=` 片段」重新还原
+
+**整理预览与确认**
+- 拆成两段：`/api/ai/organize`（只整理）→ 前端展示「写到哪里 + 写了什么」→ `/api/kb/write`（确认后才落盘）
+- 预览含：目录下拉、AI 判断理由、完整目标路径、正文渲染、知识点/概念/标签、异常提示
+
+**目录路由**
+- 扫描知识库一级目录作为候选（Obsidian：vault 下文件夹；Markdown 目录：保存目录下文件夹）
+- 候选列表进 prompt，模型返回 `category` + `category_reason`；服务端校验必须命中候选，防止编造路径
+- 写入时把分类拼进 baseDir，概念笔记与 `_索引.md` 也跟着进同一分类目录
+
+**JSON 健壮性**
+- `response_format: json_object` + 解析失败自动纠错重试一次
+- 解析器支持：前后有解释文字、字面换行、尾逗号、被截断、JSON 里嵌套 markdown 代码块
+- 仍然失败时用「整段 Markdown 当正文」兜底，并把告警显示在预览里
+
+## 8. 第四轮：表格 / 公式渲染与预览白屏
+
+**表格 + 公式**
+- 用 `marked`（GFM）替换原来的极简渲染器，表格、列表、代码块一次到位
+- 数学公式用 KaTeX（本地 `public/vendor`，离线可用）：`$...$`、`$$...$$`、`\(...\)`、`\[...\]` 都认；块级公式先抽成占位符再渲染，避免被 markdown 拆成多个文本节点
+- `\[` / `\(` 会被 markdown 当转义吃掉，所以先归一化成 `$` / `$$`
+- 没有定界符的 `x^2`、`e^(2x)`、`H_2O` 也转成上/下标
+- 提示词里明确要求：对比用 Markdown 表格、公式用 LaTeX、不要把公式放代码块
+- ⚠️ 坑：electron-builder 会把「代码里没引用」的 node_modules 裁掉，katex 一开始整个消失 → 改为把 marked/katex 拷进 `public/vendor`（`npm run vendor`），一定被打包
+
+**预览白屏**
+- 预览页内点外链：改为 postMessage 交给外层 → 系统浏览器打开；主进程加 `will-frame-navigate` 兜底
+- 正文包一层 `.af-content`，加载后按「正文文本 + 媒体元素」判空，为空时显示「正文没有加载出来 + 重新加载 / 在浏览器中打开」，不再是一块白板
+
+## 9. 第五轮：搜索量太少 / 最新的搜不到
+
+- 搜狗微信**翻页**（2 页 ≈ 20 条），并对前 6 条即时解析成真实微信地址
+- 新增 **360 搜索**源：结果自带 `data-mdurl`（真实地址）和中文日期（`2026年5月20日`），不用再解跳转
+- 「全部来源」= 公众号 + 360 + Bing + DuckDuckGo 四路并行，失败一路不影响其它路
+- 去重升级：URL 之外，「标题 + 发布日期」相同也判重（同一篇的公众号转载）
+- 时间范围内没结果时不再空屏，回退全量并提示
+- 性能：各源加超时（DDG 6s / 360 12s / Bing 12s / 搜狗 15s），DDG 连接失败不重试直接交给降级；整次搜索从 22s 降到 ~6s，缓存命中 0.3s
+- 结果数上限 20 → 30
+
+## 10. 第六轮：目录要往深了找、整理要落在一个 md、时间过滤别骗人
+
+- **目录候选扫两级**：`渗透`、`渗透/内存取证` 都会进候选列表；AI 提示词要求原样返回（可以是二级路径）并优先挑最贴近的已有目录
+- 修了一个真 bug：`safeCategory()` 原本把带 `/` 的目录名整个丢掉，导致二级目录永远写不进去 → 改为允许相对路径、挡住 `..` 与绝对路径
+- **单文件模式（默认开）**：`kb.singleFile`，概念清单、知识点关联全部内联，不建概念卡、不写 `_索引.md`；设置里可切回多文件
+- **时间过滤诚实化**：选中时间范围自动切「按时间」排序；范围内没结果时回退全量 + 顶部黄色横幅说明
+- **公众号覆盖**：搜狗翻 3 页（≈30 条）；README 里写清免费源的局限与 Tavily 选项
+
+## 11. 第七轮：目录树（不限层数）+ 黑曜石式目录选择器
+
+- `kbTree()` 全量扫目录（maxDepth 6 / maxDirs 600），`treeText()` 生成缩进文本喂给 AI；AI 必须返回树里的完整路径，或「已有目录/新目录」
+- 修了上一轮 `safeCategory` 之外的第二个坑：**AI 只在两层里选**，用户 vault 存在三层以上的目录结构 → 改为整树
+- 前端把 `<select>` 换成**可折叠目录树弹层**：展开/折叠、点选、行内 `＋` 新建子目录、`＋ 顶层`、关键词筛选、默认目录入口；选完实时刷新目标路径
+- 深路径写入验证：三层目录下的笔记正确落盘
+
+## 12. 交付物
+
+- 可运行 Web 应用（桌面 `ArticleForge/`，`npm start` 即用）
+- 示例文章《内存取证练习10》的 PDF / DOCX / MD 实测产物
+- 内置 6 个页签：转换、检索、监控、知识库、导出记录、设置

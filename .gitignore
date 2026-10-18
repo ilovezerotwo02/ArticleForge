@@ -1,0 +1,8 @@
+node_modules/
+release/
+data/
+scripts/shots/
+*.log
+.workbuddy/
+.DS_Store
+Thumbs.db

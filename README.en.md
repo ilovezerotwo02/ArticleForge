@@ -56,7 +56,7 @@ Each step works on its own; or run the whole thing end to end.
 
 ## Install
 
-Grab `ArticleForge-1.0.0-portable.exe` from [Releases](https://github.com/ilovezerotwo02/ArticleForge/releases) and run it. Data lives in `%APPDATA%\articleforge\data`; to uninstall, delete the exe and that folder.
+Grab `ArticleForge-1.0.5-portable.exe` from [Releases](https://github.com/ilovezerotwo02/ArticleForge/releases) and run it. Data lives in `%APPDATA%\articleforge\data`; to uninstall, delete the exe and that folder.
 
 ## Run from source
 
@@ -84,7 +84,7 @@ npm run app
 npm run vendor
 npm run icon        # regenerate icons after changing build/icon.png
 npm run build:dir   # unpacked → release/win-unpacked
-npm run build       # portable exe → release/ArticleForge-1.0.0-portable.exe
+npm run build       # portable exe → release/ArticleForge-1.0.5-portable.exe
 ```
 
 ## Quick start

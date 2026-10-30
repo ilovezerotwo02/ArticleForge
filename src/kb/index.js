@@ -1,6 +1,7 @@
 /** 知识库目标适配器注册表 */
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { DATA, settings } from '../config.js';
 import obsidian from './obsidian.js';
 import folder from './folder.js';
@@ -202,4 +203,100 @@ export function previewTarget({ category = '', title = '未命名笔记' } = {})
     return { kind: 'api', root: cfg.siyuan?.apiUrl || '', dir: cfg.siyuan?.notebookName || '（自动选第一个笔记本）', file: safe, display: `思源 / ${cfg.siyuan?.notebookName || '第一个笔记本'} / ${safe}` };
   }
   return { kind: 'api', root: 'Notion', dir: cfg.notion?.databaseId || '', file: safe, display: `Notion 数据库 ${cfg.notion?.databaseId || ''} / ${safe}` };
+}
+
+/* ---------------- 应用内笔记浏览（文件型知识库：Obsidian / 目录 / Logseq） ----------------
+ * 让你在 ArticleForge 里直接翻、直接看知识库的 md 笔记，不用再开一个软件。
+ */
+
+const KB_IGNORE = new Set(['.obsidian', '.trash', '.git', '.sync', '.stfolder', 'node_modules']);
+
+/** 文件型知识库的根目录；思源 / Notion 是 API 模式，返回空串 */
+export function kbRootDir() {
+  const cfg = settings();
+  const key = currentKey();
+  const root =
+    key === 'obsidian'
+      ? cfg.obsidian?.vaultPath || ''
+      : key === 'folder'
+        ? cfg.folder?.dir || ''
+        : key === 'logseq'
+          ? cfg.logseq?.graphPath || ''
+          : '';
+  return root && fs.existsSync(root) ? path.resolve(root) : '';
+}
+
+/** 全量 md 文件清单（相对路径），按修改时间从新到旧 */
+export function kbFiles({ limit = 2000 } = {}) {
+  const root = kbRootDir();
+  if (!root) return { key: currentKey(), root: '', files: [] };
+  const files = [];
+  const walk = (dir) => {
+    if (files.length >= limit) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      if (files.length >= limit) break;
+      if (ent.name.startsWith('.') || ent.name.startsWith('_') || KB_IGNORE.has(ent.name)) continue;
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!ent.name.toLowerCase().endsWith('.md')) continue;
+      let st = {};
+      try {
+        st = fs.statSync(full);
+      } catch {}
+      files.push({
+        path: path.relative(root, full).split(path.sep).join('/'),
+        name: ent.name.replace(/\.md$/i, ''),
+        dir: path.relative(root, dir).split(path.sep).join('/') || '',
+        mtime: st.mtime ? new Date(st.mtime).toISOString() : '',
+        size: st.size || 0,
+      });
+    }
+  };
+  walk(root);
+  files.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
+  return { key: currentKey(), root, files };
+}
+
+/** 把相对路径解析成库内绝对路径：挡住越权（.. / 绝对路径 / 非 md） */
+function kbResolve(rel) {
+  const root = kbRootDir();
+  if (!root) throw new Error('当前知识库是 API 模式（思源 / Notion），不支持文件浏览');
+  const cleanRel = String(rel || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!cleanRel || cleanRel.includes('..') || !/\.md$/i.test(cleanRel)) throw new Error('非法的笔记路径');
+  const abs = path.resolve(root, cleanRel);
+  if (!abs.startsWith(root + path.sep)) throw new Error('笔记路径越界');
+  if (!fs.existsSync(abs)) throw new Error('笔记不存在（可能刚被移动或改名，刷新一下）');
+  return { root, abs, rel: cleanRel };
+}
+
+/** 读一篇笔记的原文 */
+export function kbReadNote(rel) {
+  const { abs, rel: cleanRel } = kbResolve(rel);
+  const st = fs.statSync(abs);
+  const dir = path.dirname(cleanRel);
+  return {
+    path: cleanRel,
+    name: path.basename(cleanRel).replace(/\.md$/i, ''),
+    dir: dir === '.' ? '' : dir,
+    mtime: new Date(st.mtime).toISOString(),
+    size: st.size,
+    content: fs.readFileSync(abs, 'utf8'),
+  };
+}
+
+/** 用系统默认软件打开笔记（Obsidian / Typora 等） */
+export function kbOpenNote(rel) {
+  const { abs } = kbResolve(rel);
+  const cmd = process.platform === 'win32' ? 'explorer' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+  spawn(cmd, [abs], { detached: true, stdio: 'ignore' }).unref();
+  return { opened: abs };
 }

@@ -13,55 +13,127 @@ const browser = await puppeteer.launch({
 const page = await browser.newPage();
 await page.setContent('<html><body style="margin:0;background:transparent"></body></html>', { waitUntil: 'load' });
 
-/** 在 canvas 上直接绘制图标，避免依赖 PNG 解码 */
+/** 在 canvas 上直接绘制图标，避免依赖 PNG 解码
+ * 设计：深靛紫渐变底 + 微倾斜的文章页（折角 + 文字行）+ 琥珀色「锻造火花」
+ */
 async function draw(size) {
   return page.evaluate(async (size) => {
     const c = document.createElement('canvas');
     c.width = size;
     c.height = size;
     const ctx = c.getContext('2d');
-    const r = size * 0.23;
+    const S = size;
+    const r = S * 0.225;
 
+    // 底板：靛蓝 → 紫 → 品红对角渐变
     ctx.beginPath();
-    ctx.roundRect(0, 0, size, size, r);
+    ctx.roundRect(0, 0, S, S, r);
     ctx.clip();
-
-    const g = ctx.createLinearGradient(0, 0, size, size);
-    g.addColorStop(0, '#6366f1');
-    g.addColorStop(0.55, '#7c3aed');
-    g.addColorStop(1, '#4f46e5');
+    const g = ctx.createLinearGradient(0, 0, S, S);
+    g.addColorStop(0, '#4338ca');
+    g.addColorStop(0.5, '#6d28d9');
+    g.addColorStop(1, '#a21caf');
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, size, size);
+    ctx.fillRect(0, 0, S, S);
 
-    const hl = ctx.createRadialGradient(size * 0.3, size * 0.2, 0, size * 0.3, size * 0.2, size * 0.75);
-    hl.addColorStop(0, 'rgba(255,255,255,.32)');
-    hl.addColorStop(0.6, 'rgba(255,255,255,0)');
+    // 左上柔光 + 右下暗角，让底色有层次
+    const hl = ctx.createRadialGradient(S * 0.28, S * 0.22, 0, S * 0.28, S * 0.22, S * 0.85);
+    hl.addColorStop(0, 'rgba(255,255,255,.30)');
+    hl.addColorStop(0.55, 'rgba(255,255,255,0)');
     ctx.fillStyle = hl;
-    ctx.fillRect(0, 0, size, size);
+    ctx.fillRect(0, 0, S, S);
+    const vg = ctx.createRadialGradient(S * 0.74, S * 0.84, S * 0.1, S * 0.74, S * 0.84, S * 0.95);
+    vg.addColorStop(0, 'rgba(0,0,0,.20)');
+    vg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, S, S);
 
-    // AF 字母
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = `800 ${size * 0.44}px "Segoe UI", "Arial Black", sans-serif`;
-    if ('letterSpacing' in ctx) ctx.letterSpacing = `${-size * 0.02}px`;
-    ctx.fillText('AF', size * 0.5, size * 0.52);
-
-    // 底部装饰条
-    ctx.fillStyle = 'rgba(255,255,255,.45)';
-    ctx.beginPath();
-    ctx.roundRect(size * 0.19, size * 0.775, size * 0.24, size * 0.018, size * 0.009);
-    ctx.fill();
-
-    // 青色小点
+    // 文章页：白色圆角矩形，微倾斜 -6°，右上折角
     ctx.save();
-    ctx.shadowColor = 'rgba(165,243,252,.9)';
-    ctx.shadowBlur = size * 0.06;
-    ctx.fillStyle = '#a5f3fc';
+    ctx.translate(S * 0.48, S * 0.52);
+    ctx.rotate(-0.105);
+    const pw = S * 0.52;
+    const ph = S * 0.63;
+    const x0 = -pw / 2;
+    const y0 = -ph / 2;
+    const fold = S * 0.10;
+    ctx.shadowColor = 'rgba(0,0,0,.35)';
+    ctx.shadowBlur = S * 0.06;
+    ctx.shadowOffsetY = S * 0.02;
+    ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.arc(size * 0.81, size * 0.785, size * 0.026, 0, Math.PI * 2);
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x0 + pw - fold, y0);
+    ctx.lineTo(x0 + pw, y0 + fold);
+    ctx.lineTo(x0 + pw, y0 + ph);
+    ctx.lineTo(x0, y0 + ph);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+    // 折角
+    ctx.fillStyle = '#d7ddf1';
+    ctx.beginPath();
+    ctx.moveTo(x0 + pw - fold, y0);
+    ctx.lineTo(x0 + pw, y0 + fold);
+    ctx.lineTo(x0 + pw - fold, y0 + fold);
+    ctx.closePath();
+    ctx.fill();
+    // 文字行：标题粗条 + 两行正文 + 一行高亮代码
+    ctx.fillStyle = '#7c86ad';
+    ctx.beginPath();
+    ctx.roundRect(x0 + pw * 0.16, y0 + ph * 0.20, pw * 0.52, S * 0.036, S * 0.018);
+    ctx.fill();
+    ctx.fillStyle = '#c9d0e6';
+    ctx.beginPath();
+    ctx.roundRect(x0 + pw * 0.16, y0 + ph * 0.38, pw * 0.68, S * 0.024, S * 0.012);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.roundRect(x0 + pw * 0.16, y0 + ph * 0.52, pw * 0.58, S * 0.024, S * 0.012);
+    ctx.fill();
+    ctx.fillStyle = '#818cf8';
+    ctx.beginPath();
+    ctx.roundRect(x0 + pw * 0.16, y0 + ph * 0.70, pw * 0.40, S * 0.024, S * 0.012);
     ctx.fill();
     ctx.restore();
+
+    // 锻造火花：四角星（琥珀渐变 + 辉光）+ 一粒小火星
+    ctx.save();
+    ctx.translate(S * 0.775, S * 0.735);
+    ctx.rotate(0.18);
+    const R1 = S * 0.125;
+    const R2 = S * 0.042;
+    const spark = ctx.createLinearGradient(-R1, -R1, R1, R1);
+    spark.addColorStop(0, '#fef3c7');
+    spark.addColorStop(0.55, '#fbbf24');
+    spark.addColorStop(1, '#f59e0b');
+    ctx.shadowColor = 'rgba(251,191,36,.95)';
+    ctx.shadowBlur = S * 0.07;
+    ctx.fillStyle = spark;
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const ang = (Math.PI / 4) * i - Math.PI / 2;
+      const rad = i % 2 === 0 ? R1 : R2;
+      const px = Math.cos(ang) * rad;
+      const py = Math.sin(ang) * rad;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(-S * 0.062, -S * 0.088, S * 0.018, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 内描边：小尺寸下轮廓更清晰
+    const lw = Math.max(1, S * 0.012);
+    ctx.strokeStyle = 'rgba(255,255,255,.22)';
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.roundRect(lw / 2, lw / 2, S - lw, S - lw, r - lw / 2);
+    ctx.stroke();
 
     const data = ctx.getImageData(0, 0, size, size).data;
     return { pixels: Array.from(data), png: c.toDataURL('image/png') };

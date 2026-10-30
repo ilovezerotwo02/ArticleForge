@@ -9,6 +9,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%234f46e5'/><path d='M28 72V28h20c12 0 19 6 19 15 0 6-3 11-9 13 7 2 11 7 11 14 0 10-8 17-21 17H28zm12-9h10c6 0 9-3 9-8s-3-8-9-8H40v16zm0-25h8c5 0 8-2 8-7s-3-7-8-7h-8v14z' fill='white'/></svg>">
 </head>
 <body>
+<div class="bg-layer" id="bgLayer" hidden></div>
 <div class="app">
   <!-- 图标导航 -->
   <nav class="rail">
@@ -18,6 +19,10 @@
     </button>
     <button class="rail-btn" data-view="search" title="检索">
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg><span>检索</span>
+    </button>
+    <button class="rail-btn" data-view="todo" title="待办便签：记下没完成的事，可随意拖动、固定">
+      <svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg><span>待办</span>
+      <i class="rail-count" id="todoRailCount" hidden></i>
     </button>
     <button class="rail-btn" data-view="watch" title="监控">
       <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 7h18s-3 0-3-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span>监控</span>
@@ -34,7 +39,9 @@
   <!-- 资料库列表 -->
   <aside class="list-pane" id="listPane">
     <div class="pane-head">
-      <div class="pane-title">资料库 <span class="count" id="libCount">0</span></div>
+      <div class="pane-title">资料库 <span class="count" id="libCount">0</span>
+        <button class="todo-badge" id="todoBadge" title="点一下只看标记了「未完成」的文章" hidden>未完成 <b>0</b></button>
+      </div>
       <button class="icon-btn" id="refreshLib" title="刷新">
         <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
       </button>
@@ -54,6 +61,7 @@
     <div class="list-search">
       <input id="libFilter" type="text" placeholder="筛选标题 / 公众号…">
     </div>
+    <div class="tag-filter" id="tagFilterBar" hidden></div>
     <div class="article-list" id="articleList"></div>
   </aside>
 
@@ -110,6 +118,7 @@
           <option value="all" selected>全部来源</option>
           <option value="wechat">微信公众号</option>
           <option value="web">网页</option>
+          <option value="intel">安全情报（免验证）</option>
         </select>
         <select id="searchTime">
           <option value="" selected>不限时间</option>
@@ -121,6 +130,13 @@
         <select id="searchSort">
           <option value="relevance" selected>按相关度</option>
           <option value="time">按时间</option>
+        </select>
+        <select id="searchPages" title="翻页数越多结果越全，也更慢">
+          <option value="2">2 页 · 约 20 条</option>
+          <option value="3">3 页 · 约 30 条</option>
+          <option value="5" selected>5 页 · 约 50 条</option>
+          <option value="8">8 页 · 约 80 条</option>
+          <option value="10">10 页 · 约 100 条</option>
         </select>
         <button class="btn primary" id="searchBtn">搜索</button>
       </div>
@@ -141,16 +157,63 @@
           <option value="180">每 3 小时</option>
           <option value="720">每 12 小时</option>
         </select>
-        <label class="mini-check"><input type="checkbox" id="watchWechat" checked> 只看公众号</label>
+        <select id="watchSource" title="监控数据源：全网遇到安全类关键词会自动并入免验证情报源">
+          <option value="all" selected>全网</option>
+          <option value="wechat">只看公众号</option>
+          <option value="web">只看网页</option>
+          <option value="intel">安全情报（免验证）</option>
+        </select>
+        <select id="watchTime" title="监控只看这个时间窗内的新内容">
+          <option value="day">最近 24 小时</option>
+          <option value="week" selected>最近一周</option>
+          <option value="month">最近一个月</option>
+          <option value="3month">最近三个月</option>
+          <option value="">不限时间</option>
+        </select>
+        <select id="watchPages" title="每个源翻几页（越多越全）">
+          <option value="2">2 页</option>
+          <option value="3">3 页</option>
+          <option value="5">5 页</option>
+          <option value="8" selected>8 页</option>
+          <option value="10">10 页</option>
+        </select>
         <button class="btn primary" id="addWatchBtn">添加监控</button>
       </div>
       <div class="watch-list" id="watchList"></div>
+    </section>
+
+    <section class="view" id="viewTodo" hidden>
+      <div class="page-head">
+        <h1>待办便签</h1>
+        <p>记下没完成的事：便签可以拖到窗口任意位置（切到别的页面也一直显示），📌固定后不怕误拖，做完打勾归档。</p>
+      </div>
+      <div class="todo-bar">
+        <input id="todoInput" type="text" placeholder="记一件没完成的事…（回车添加）" maxlength="200">
+        <button class="btn primary" id="addTodoBtn">添加便签</button>
+        <button class="btn ghost" id="clearDoneTodo" title="删除所有已打勾的便签">清空已完成</button>
+      </div>
+      <div class="todo-board" id="todoBoard"><div class="skeleton" id="todoEmpty">还没有便签，在上面输入第一件没完成的事吧</div></div>
     </section>
 
     <section class="view" id="viewKnowledge" hidden>
       <div class="page-head">
         <h1>知识库</h1>
         <p>支持 Obsidian / Logseq / 思源 / Notion / 任意 Markdown 目录；概念笔记自动建链，避免重复。</p>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-head">
+          <h3>笔记浏览器 <span class="hint" style="margin:0">在应用里直接翻、直接看 md，不用再开一个软件</span></h3>
+          <button class="link-btn" id="kbRefreshBtn">刷新</button>
+        </div>
+        <div class="kb-toolbar">
+          <input id="kbNoteFilter" type="text" placeholder="筛选笔记名 / 目录…">
+          <span class="hint" id="kbBrowserHint" style="margin:0"></span>
+        </div>
+        <div class="kb-browser">
+          <div class="kb-note-list" id="kbNoteList"><div class="skeleton">加载中…</div></div>
+          <div class="kb-reader" id="kbReader"><div class="skeleton">从左侧选一篇笔记查看</div></div>
+          <div class="kb-toc" id="kbToc" hidden></div>
+        </div>
       </div>
       <div class="knowledge-grid">
         <div class="card" id="vaultCard"></div>
@@ -165,7 +228,7 @@
     <section class="view" id="viewSettings" hidden>
       <div class="page-head">
         <h1>设置</h1>
-        <p>AI 走 OpenAI 兼容协议，DeepSeek / Kimi / 通义 / OpenAI / 本地 Ollama 均可。</p>
+        <p>AI 走 OpenAI 兼容协议，DeepSeek / Kimi / 通义 / OpenAI / 本地 Ollama 均可。<span id="afVersion" style="color:var(--brand);font-weight:600"></span></p>
       </div>
       <div class="settings-grid" id="settingsGrid"></div>
     </section>
@@ -206,6 +269,9 @@
     </div>
   </aside>
 </div>
+
+<!-- 便签浮层：便签可以拖出待办板，漂浮在窗口任意位置，切页面也一直可见 -->
+<div class="note-float" id="noteFloat" hidden></div>
 
 <!-- 划词浮条 -->
 <div class="sel-toolbar" id="selToolbar" hidden>

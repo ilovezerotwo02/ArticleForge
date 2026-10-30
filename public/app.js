@@ -14,6 +14,9 @@ const state = {
   tab: 'preview',
   streaming: false,
   lastOrganized: null,
+  search: null,
+  tagFilter: '',
+  todos: [],
   organizeSpec: JSON.parse(localStorage.getItem('af.organizeSpec') || 'null') || {
     preset: 'study',
     detail: 'normal',
@@ -204,6 +207,11 @@ function mdLite(src) {
   // 有些模型会把换行输出成字面量 \n，这里兜一下
   if ((text.match(/\\n/g) || []).length > 3 && !/\n/.test(text)) text = text.replace(/\\n/g, '\n');
   text = normalizeMathDelims(text);
+  // Obsidian 式 ==高亮== → <mark>（跳过代码段，代码里的 == 保持原样）
+  text = text
+    .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
+    .map((seg, i) => (i % 2 ? seg : seg.replace(/==([^=\n]+?)==/g, '<mark>$1</mark>')))
+    .join('');
 
   // 块级公式先摘出来：marked 会把它拆成多个节点，事后再补回去
   const blocks = [];
@@ -294,18 +302,59 @@ async function loadLibrary() {
 
 function renderLibrary() {
   const q = ($('#libFilter').value || '').toLowerCase().trim();
-  const list = state.articles.filter(
-    (a) => !q || (a.title || '').toLowerCase().includes(q) || (a.account || '').toLowerCase().includes(q) || (a.tags || []).join(' ').includes(q)
-  );
+  const list = state.articles.filter((a) => {
+    if (state.tagFilter && !(a.userTags || []).includes(state.tagFilter)) return false;
+    return (
+      !q ||
+      (a.title || '').toLowerCase().includes(q) ||
+      (a.account || '').toLowerCase().includes(q) ||
+      (a.tags || []).join(' ').includes(q) ||
+      (a.userTags || []).join(' ').includes(q)
+    );
+  });
   $('#libCount').textContent = state.articles.length;
+
+  // 「未完成」徽章：文章打了「未完成」标签就有计数，点一下只看没办完的
+  const todoCount = state.articles.filter((a) => (a.userTags || []).includes('未完成')).length;
+  const badge = $('#todoBadge');
+  badge.hidden = !state.articles.length;
+  badge.innerHTML = `未完成 <b>${todoCount}</b>`;
+  badge.classList.toggle('on', state.tagFilter === '未完成');
+
+  // 标签筛选栏：常驻显示。内置状态标签（未完成/进行中/已完成/重要）排在前面，
+  // 没用过的置灰 —— 不用先打标签也能一眼看到「点这里看未完成的事」
+  const counts = new Map();
+  for (const a of state.articles) for (const t of a.userTags || []) counts.set(t, (counts.get(t) || 0) + 1);
+  const orderedTags = [
+    ...TAG_PRESETS,
+    ...[...counts.keys()].filter((t) => !TAG_PRESETS.includes(t)).sort((a, b) => (counts.get(b) || 0) - (counts.get(a) || 0) || a.localeCompare(b, 'zh-CN')),
+  ];
+  const tagBar = $('#tagFilterBar');
+  tagBar.hidden = !state.articles.length;
+  tagBar.innerHTML =
+    '<span class="tag-filter-label">标签</span>' +
+    orderedTags
+      .map((t) => {
+        const c = counts.get(t) || 0;
+        return `<button class="tag-chip ${state.tagFilter === t ? 'on' : ''}${t === '未完成' ? ' todo' : ''}${c ? '' : ' zero'}" data-tag="${esc(t)}" title="点击只看「${esc(t)}」的内容">${esc(t)}<i>${c}</i></button>`;
+      })
+      .join('');
+
   const box = $('#articleList');
   if (!list.length) {
-    box.innerHTML = `<div class="skeleton">${state.articles.length ? '没有匹配的文章' : '还没有内容，粘贴链接或上传文件开始'}</div>`;
+    box.innerHTML = `<div class="skeleton">${
+      !state.articles.length
+        ? '还没有内容，粘贴链接或上传文件开始'
+        : state.tagFilter
+        ? `「${esc(state.tagFilter)}」下还没有内容；点文章条目上的「＋标签」可以把文章标记进来`
+        : '没有匹配的文章'
+    }</div>`;
     return;
   }
   box.innerHTML = list
-    .map(
-      (a) => `<div class="article-item ${state.current?.id === a.id ? 'active' : ''}" data-id="${a.id}">
+    .map((a) => {
+      const utags = a.userTags || [];
+      return `<div class="article-item ${state.current?.id === a.id ? 'active' : ''}" data-id="${a.id}">
         <div class="t">${esc(a.title)}</div>
         <div class="m">
           <span class="badge ${a.source === 'wechat' ? 'wx' : a.source === 'upload' ? 'up' : ''}">${
@@ -313,12 +362,114 @@ function renderLibrary() {
       }</span>
           <span>${a.words || 0} 字</span>
           ${a.assets ? `<span>${a.assets} 图</span>` : ''}
+          <button class="tagadd ${utags.length ? 'has' : ''}" data-tagedit="${a.id}" title="${utags.length ? `标签：${esc(utags.join('、'))}` : '编辑标签'}">${
+        utags.length ? `🏷${utags.length}` : '＋标签'
+      }</button>
           <span style="margin-left:auto">${fmtDate(a.createdAt)}</span>
         </div>
+        ${
+          utags.length
+            ? `<div class="a-tags">${utags
+                .map((t) => `<span class="a-tag ${t === '未完成' ? 'todo' : ''}">${esc(t)}</span>`)
+                .join('')}</div>`
+            : ''
+        }
         <button class="del" data-del="${a.id}" title="删除">×</button>
-      </div>`
-    )
+      </div>`;
+    })
     .join('');
+}
+
+/* ---------------- 用户标签 ---------------- */
+
+const TAG_PRESETS = ['未完成', '进行中', '已完成', '重要'];
+
+/** 标签编辑弹窗：与 AI 标签分开，完全由用户自己维护 */
+function openTagEditor(id) {
+  const item = state.articles.find((x) => x.id === id);
+  if (!item) return;
+  const working = [...(item.userTags || [])];
+  const allTags = [...new Set(state.articles.flatMap((a) => a.userTags || []))];
+
+  const rowHtml = () =>
+    working.length
+      ? working.map((t) => `<button class="chip active" data-rm="${esc(t)}" title="点击移除">${esc(t)} ✕</button>`).join('')
+      : '<span class="hint">还没有标签，从下面选或自己输入</span>';
+  const presetHtml = () =>
+    TAG_PRESETS.filter((p) => !working.includes(p))
+      .map((p) => `<button class="chip preset" data-add="${esc(p)}"${p === '未完成' ? ' title="用「未完成」标记还没看完/没办完的事"' : ''}><span class="cl">${esc(p)}</span></button>`)
+      .join('');
+
+  const rerender = () => {
+    $('#teCur').innerHTML = rowHtml();
+    $('#tePresetChips').innerHTML = presetHtml();
+    $('#tePresets').style.display = $('#tePresetChips').innerHTML ? '' : 'none';
+  };
+
+  openModal(`
+    <h2>编辑标签</h2>
+    <p class="sub">${esc(item.title)}</p>
+    <div class="field"><label>当前标签（点击移除）</label><div class="chip-grid tags" id="teCur">${rowHtml()}</div></div>
+    <div class="field" id="tePresets"><label>快速添加</label><div class="chip-grid tags" id="tePresetChips">${presetHtml()}</div></div>
+    <div class="field"><label>自定义标签</label>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="teInput" placeholder="输入标签名，回车添加" list="teAllTags" maxlength="24">
+        <datalist id="teAllTags">${allTags.map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist>
+        <button class="btn sm primary" id="teAddBtn">添加</button>
+      </div>
+      <div class="hint">最多 12 个；「未完成 / 进行中 / 已完成」这类状态标签可用来追踪没办完的事，左侧列表顶部可按标签筛选。</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn primary" id="teSave">保存</button>
+    </div>
+  `);
+
+  rerender();
+  $('#modal').onclick = (e) => {
+    const rm = e.target.closest('[data-rm]');
+    if (rm) {
+      const i = working.indexOf(rm.dataset.rm);
+      if (i >= 0) working.splice(i, 1);
+      rerender();
+      return;
+    }
+    const add = e.target.closest('[data-add]');
+    if (add && !working.includes(add.dataset.add)) {
+      working.push(add.dataset.add);
+      rerender();
+    }
+  };
+  const addFromInput = () => {
+    const v = ($('#teInput').value || '').trim().slice(0, 24);
+    if (v && !working.includes(v)) working.push(v);
+    $('#teInput').value = '';
+    rerender();
+    $('#teInput').focus();
+  };
+  $('#teAddBtn').onclick = addFromInput;
+  $('#teInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addFromInput();
+    }
+  });
+  $('#teSave').onclick = async () => {
+    try {
+      const { article } = await api(`/api/articles/${id}`, { method: 'PATCH', body: { userTags: working } });
+      const idx = state.articles.findIndex((x) => x.id === id);
+      if (idx >= 0) state.articles[idx] = { ...state.articles[idx], userTags: article.userTags || [] };
+      if (state.current?.id === id) {
+        state.current.userTags = article.userTags || [];
+        renderTopActions();
+      }
+      renderLibrary();
+      closeModal();
+      toast(working.includes('未完成') ? '已保存，点左侧「未完成」随时找回' : '标签已保存', 'ok');
+    } catch (e) {
+      toast(e.message, 'err');
+    }
+  };
 }
 
 async function openArticle(id) {
@@ -343,10 +494,14 @@ async function openArticle(id) {
 function renderTopActions() {
   const a = state.current;
   if (!a) return ($('#topbarActions').innerHTML = '');
+  const utags = a.userTags || [];
   $('#topbarActions').innerHTML = `
+    ${utags.length ? `<span class="top-tags">${utags.map((t) => `<span class="a-tag ${t === '未完成' ? 'todo' : ''}">${esc(t)}</span>`).join('')}</span>` : ''}
+    <button class="btn sm" id="btnTags" title="编辑这篇文章的标签">🏷 标签</button>
     <button class="btn sm" id="btnExport">导出 PDF · DOCX · MD</button>
     ${a.url ? `<a class="btn sm ghost" href="${esc(a.url)}" target="_blank" rel="noreferrer">打开原文</a>` : ''}
   `;
+  $('#btnTags').onclick = () => openTagEditor(a.id);
   $('#btnExport').onclick = openExportModal;
 }
 
@@ -1115,6 +1270,137 @@ $('#selToolbar').addEventListener('click', (e) => {
 
 /* ---------------- 检索 ---------------- */
 
+const PROVIDER_LABEL = {
+  sogou: '公众号·搜狗',
+  'baidu-wx': '公众号·百度',
+  'bing-wx': '公众号·Bing',
+  wxrss: '公众号·RSS实时',
+  baidu: '百度',
+  so360: '360',
+  bing: 'Bing',
+  duckduckgo: 'DDG',
+  'sogou-web': '搜狗网页',
+  tavily: 'Tavily',
+  'bing-news': 'Bing资讯',
+};
+
+function providerList(provider) {
+  return [...new Set(String(provider || '').split('+').filter(Boolean))]
+    .map((x) => PROVIDER_LABEL[x] || x)
+    .join(' + ');
+}
+
+function resultRow(r) {
+  const tag = r.provider === 'sogou' || r.provider === 'baidu-wx' || r.source === '微信公众号' ? '公众号' : r.source || '网页';
+  const isWx = tag === '公众号';
+  return `<div class="result">
+        <div class="r-main">
+          <div class="r-title"><a href="${esc(r.url)}" target="_blank" rel="noreferrer">${esc(r.title)}</a></div>
+          <div class="r-snippet">${esc(r.snippet || '')}</div>
+          <div class="r-meta">
+            <span class="src-tag ${isWx ? 'wx' : ''}">${esc(tag)}</span>
+            ${r.account ? `<span>${esc(r.account)}</span>` : ''}
+            ${r.date ? `<span>${esc(r.date)}</span>` : '<span class="muted">日期未标注</span>'}
+            ${r.needsResolve ? '<span>链接将在转换时解析</span>' : ''}
+          </div>
+        </div>
+        <button class="btn sm" data-convert="${esc(r.url)}" data-title="${esc(r.title)}">抓取转换</button>
+      </div>`;
+}
+
+function needsVerify(list) {
+  return (list || []).some((t) => /验证码|反爬|安全验证/.test(String(t)));
+}
+
+async function runSearch(query, { pages, max } = {}) {  return api('/api/search', {
+    method: 'POST',
+    body: {
+      query,
+      sources: $('#searchSource').value,
+      timeRange: $('#searchTime').value,
+      sortBy: $('#searchSort').value,
+      pages: pages ?? (Number($('#searchPages').value) || 5),
+      max,
+    },
+  });
+}
+
+function renderSearch(res, meta = {}) {
+  const box = $('#searchResults');
+  const notes = [...(res.errors || []), ...(res.notes || [])];
+  const statsEntries = res.stats ? Object.entries(res.stats).filter(([, v]) => v > 0) : [];
+  const stats = statsEntries.map(([k, v]) => `${PROVIDER_LABEL[k] || k} ${v}`).join(' · ');
+  const usedProviders = statsEntries.length ? statsEntries.map(([k]) => k).join('+') : res.provider;
+  const timeLabel = { day: '24 小时', week: '一周', month: '一个月', '3month': '三个月', year: '一年' }[res.timeRange] || '';
+  const canMore = (Number(meta.pages) || 0) < 10 && res.count >= 20;
+  state.search = { ...res, pages: Number(meta.pages) || 5 };
+
+  box.innerHTML =
+    `<div class="search-summary">共 ${res.count} 条 · 来源 ${esc(providerList(usedProviders))}${stats ? `（${esc(stats)}）` : ''}` +
+    `${timeLabel ? ` · ${esc(timeLabel)}内` : ''}${res.sortBy === 'time' ? ' · 按时间排序' : ''} · 翻页 ${esc(String(meta.pages || 5))}` +
+    `${res.cached ? ' · 缓存' : ''}</div>` +
+    (res.timeFallback ? `<div class="search-warn">⚠ ${esc((res.notes || []).find((n) => n.includes('没有新内容')) || '所选时间范围内没有新内容，展示的是最新结果')}</div>` : '') +
+    (res.timeDropped && !res.timeFallback ? `<div class="search-warn">⚠ 已按发布时间过滤掉 ${res.timeDropped} 条时间范围外的旧文</div>` : '') +
+    (res.results.length ? res.results.map(resultRow).join('') : '<div class="skeleton">没有结果</div>') +
+    (canMore
+      ? `<div style="display:flex;justify-content:center;margin:14px 0">
+           <button class="btn sm" id="searchMoreBtn">加载更多页（当前 ${esc(String(meta.pages || 5))} 页 → ${Math.min(10, (Number(meta.pages) || 5) + 2)} 页）</button>
+         </div>`
+      : '') +
+    (notes.length ? `<div class="hint">提示：${esc(notes.join('；'))}</div>` : '') +
+    (needsVerify(notes)
+      ? `<div class="search-warn" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+           <span>搜狗/百度对当前 IP 弹了验证码，扫码式的只能人工过一次。</span>
+           <button class="btn sm" id="verifyBtn">打开浏览器过验证</button>
+         </div>`
+      : '');
+
+  const verify = $('#verifyBtn');
+  if (verify) {
+    verify.onclick = async () => {
+      verify.disabled = true;
+      verify.textContent = '已弹出浏览器，请在里面完成验证…';
+      try {
+        const r = await api('/api/search/verify', { method: 'POST', body: { query: res.query } });
+        toast(r.ok ? `验证通过（拿到 ${r.cookies} 个 Cookie），正在重搜` : '还没检测到通过，稍后再试', r.ok ? 'ok' : 'info', 6000);
+        if (r.ok) {
+          const again = await runSearch(res.query, { pages: Number(meta.pages) || 5 });
+          renderSearch(again, { pages: Number(meta.pages) || 5 });
+          return;
+        }
+      } catch (e) {
+        toast(e.message, 'err');
+      }
+      verify.disabled = false;
+      verify.textContent = '打开浏览器过验证';
+    };
+  }
+
+  const more = $('#searchMoreBtn');
+  if (more) {
+    more.onclick = async () => {
+      const next = Math.min(10, (Number(meta.pages) || 5) + 2);
+      more.disabled = true;
+      more.textContent = '加载中…';
+      try {
+        const r = await runSearch(res.query, { pages: next });
+        if (!r.results.length) {
+          // 翻页失败（常见于被反爬）时保留已有结果，别把屏幕清空
+          toast(`翻页没抓到内容：${(r.errors || []).join('；') || '稍后再试'}`, 'err');
+          more.disabled = false;
+          more.textContent = '加载更多页';
+          return;
+        }
+        renderSearch(r, { pages: next });
+      } catch (e) {
+        toast(e.message, 'err');
+        more.disabled = false;
+        more.textContent = '加载更多页';
+      }
+    };
+  }
+}
+
 async function doSearch() {
   const query = $('#searchInput').value.trim();
   // 选了时间范围就自动切到按时间，避免新的被埋在相关度后面
@@ -1122,42 +1408,11 @@ async function doSearch() {
   if (!query) return toast('请输入关键词', 'err');
   const box = $('#searchResults');
   box.dataset.touched = '1';
-  box.innerHTML = '<div class="skeleton">搜索中…</div>';
+  box.innerHTML = '<div class="skeleton">搜索中…（多源并行 + 多页翻页，通常 3～10 秒）</div>';
   try {
-    const res = await api('/api/search', {
-      method: 'POST',
-      body: {
-        query,
-        sources: $('#searchSource').value,
-        timeRange: $('#searchTime').value,
-        sortBy: $('#searchSort').value,
-        max: 30,
-      },
-    });
-    if (!res.results.length) {
-      box.innerHTML = `<div class="skeleton">没有结果${res.errors?.length ? '：' + esc(res.errors.join('；')) : ''}</div>`;
-      return;
-    }
-    const timeNote = (res.errors || []).find((e) => e.includes('时间范围'));
-    box.innerHTML =
-      (timeNote ? `<div class="search-warn">⚠ ${esc(timeNote)}</div>` : '') +
-      `<div class="search-summary">共 ${res.count} 条 · 来源 ${esc([...new Set(String(res.provider).split('+').map((x) => ({ sogou: '公众号', so360: '网页', duckduckgo: '网页', bing: '网页', 'sogou-web': '网页', tavily: '网页' }[x] || x)))].join(' + '))}${res.timeRange ? ` · ${esc({ day: '24 小时', week: '一周', month: '一个月', year: '一年' }[res.timeRange] || res.timeRange)}内` : ''}${res.sortBy === 'time' ? ' · 按时间排序' : ''}</div>` +
-      res.results
-        .map(
-          (r) => `<div class="result">
-        <div class="r-main">
-          <div class="r-title"><a href="${esc(r.url)}" target="_blank" rel="noreferrer">${esc(r.title)}</a></div>
-          <div class="r-snippet">${esc(r.snippet || '')}</div>
-          <div class="r-meta">
-            <span class="src-tag ${r.provider === 'sogou' ? 'wx' : ''}">${esc(r.provider === 'sogou' ? '公众号' : r.provider === 'so360' ? '网页' : r.source || '网页')}</span>
-            ${r.date ? `<span>${esc(r.date)}</span>` : ''}
-            ${r.provider === 'sogou' && r.needsResolve ? '<span>链接将在转换时解析</span>' : ''}
-          </div>
-        </div>
-        <button class="btn sm" data-convert="${esc(r.url)}" data-title="${esc(r.title)}">抓取转换</button>
-      </div>`
-        )
-        .join('') + (res.errors?.length ? `<div class="hint">提示：${esc(res.errors.join('；'))}</div>` : '');
+    const pages = Number($('#searchPages').value) || 5;
+    const res = await runSearch(query, { pages, max: Math.min(200, pages * 12) });
+    renderSearch(res, { pages });
   } catch (e) {
     box.innerHTML = `<div class="skeleton">搜索失败：${esc(e.message)}</div>`;
   }
@@ -1172,13 +1427,20 @@ async function loadWatches() {
     box.innerHTML = '<div class="skeleton">还没有监控任务，添加关键词后系统会定时检查新内容</div>';
     return;
   }
+  const TIME_LABEL = { day: '最近 24 小时', week: '最近一周', month: '最近一个月', '3month': '最近三个月', year: '最近一年' };
+  const SRC_LABEL = { all: '全网', wechat: '仅公众号', web: '网页', intel: '安全情报' };
   box.innerHTML = watches
-    .map(
-      (w) => `<div class="watch-card" data-wid="${w.id}">
+    .map((w) => {
+      const hits = w.hits || [];
+      const fresh = hits.filter((h) => h.isNew).length;
+      return `<div class="watch-card" data-wid="${w.id}">
       <div class="watch-top">
         <span class="watch-q">${esc(w.label || w.query)}</span>
-        <span class="badge">${w.wechatOnly ? '仅公众号' : '全网'}</span>
+        <span class="badge">${esc(SRC_LABEL[w.sources] || (w.wechatOnly ? '仅公众号' : '全网'))}</span>
+        <span class="badge">${esc(TIME_LABEL[w.timeRange] || '不限时间')}</span>
+        <span class="badge">${esc(String(w.pages || 5))} 页/源</span>
         <span class="badge">每 ${w.intervalMin} 分钟</span>
+        ${fresh ? `<span class="badge" style="background:#e8f7ef;color:#16875a">${fresh} 条待看</span>` : ''}
         <div style="margin-left:auto;display:flex;gap:6px">
           <button class="btn sm" data-check="${w.id}">立即检查</button>
           <button class="btn sm ghost" data-remove="${w.id}">删除</button>
@@ -1186,26 +1448,210 @@ async function loadWatches() {
       </div>
       <div class="watch-meta">
         <span>上次检查：${w.lastRun ? new Date(w.lastRun).toLocaleString('zh-CN') : '未运行'}</span>
-        <span>已见 ${(w.seen || []).length} 条</span>
-        ${w.lastError ? `<span style="color:var(--amber)">${esc(w.lastError.slice(0, 60))}</span>` : ''}
+        <span>已见 ${(w.seenKeys || w.seen || []).length} 条</span>
+        ${w.lastCount ? `<span>本次抓到 ${w.lastCount} 条</span>` : ''}
+        ${w.lastFresh ? `<span>新 ${w.lastFresh} 条</span>` : ''}
+        ${w.lastBackfill ? `<span style="color:var(--muted)">旧文补录 ${w.lastBackfill}</span>` : ''}
+        ${w.lastError ? `<span style="color:var(--amber)">${esc(String(w.lastError).slice(0, 60))}</span>` : ''}
       </div>
       <div class="watch-hits">
-        ${(w.hits || [])
-          .slice(0, 6)
+        ${hits
+          .slice(0, 8)
           .map(
             (h) => `<div class="hit"><i class="dot"></i>
             <a href="${esc(h.url)}" target="_blank" rel="noreferrer">${esc(h.title)}</a>
-            <span class="when">${h.baseline ? '基线' : fmtDate(h.at)}</span>
+            ${h.publishDate || h.date ? `<span class="when">${esc(h.publishDate || h.date)}</span>` : ''}
+            <span class="when">${h.baseline ? '基线' : h.backfill ? '旧文补录' : h.isNew ? '新增' : fmtDate(h.foundAt || h.at)}</span>
+            ${typeof h.score === 'number' && h.isNew && !h.baseline ? `<span class="when" title="关键词/来源/新鲜度加权">★${h.score}</span>` : ''}
             <button class="link-btn" data-convert="${esc(h.url)}" data-title="${esc(h.title)}">转换</button></div>`
           )
           .join('') || '<div class="hint">暂无命中</div>'}
       </div>
-    </div>`
-    )
+    </div>`;
+    })
     .join('');
 }
 
 /* ---------------- 知识库 ---------------- */
+
+/* ---- 应用内笔记浏览器：直接翻、直接看知识库里的 md ---- */
+
+const kbBrowser = { files: [], filter: '', current: '', expanded: new Set() };
+
+async function loadKbBrowser() {
+  const list = $('#kbNoteList');
+  try {
+    const r = await api('/api/kb/files');
+    kbBrowser.files = r.files || [];
+    kbBrowser.current = '';
+    // 默认展开第一层目录，深层折叠
+    kbBrowser.expanded = new Set(
+      [...new Set(kbBrowser.files.map((f) => (f.dir || '').split('/')[0]))].filter(Boolean)
+    );
+    $('#kbBrowserHint').textContent = r.root
+      ? `${kbBrowser.files.length} 篇 · ${r.root}`
+      : '当前知识库是 API 模式（思源 / Notion），暂不支持应用内浏览';
+    renderKbNoteList();
+    $('#kbReader').innerHTML = '<div class="skeleton">从左侧选一篇笔记查看</div>';
+    $('#kbToc').hidden = true;
+    if (kbBrowser.files.length) openKbNote(kbBrowser.files[0].path);
+  } catch (e) {
+    list.innerHTML = `<div class="skeleton">${esc(e.message)}</div>`;
+  }
+}
+
+/** 把平铺文件清单组装成目录树 */
+function kbTreeOf(files) {
+  const root = { dirs: new Map(), files: [] };
+  for (const f of files) {
+    const parts = String(f.dir || '').split('/').filter(Boolean);
+    let node = root;
+    let acc = [];
+    for (const p of parts) {
+      acc.push(p);
+      const key = acc.join('/');
+      if (!node.dirs.has(key)) node.dirs.set(key, { name: p, dirs: new Map(), files: [] });
+      node = node.dirs.get(key);
+    }
+    node.files.push(f);
+  }
+  return root;
+}
+
+const kbCountAll = (node) => node.files.length + [...node.dirs.values()].reduce((n, d) => n + kbCountAll(d), 0);
+
+/** 目录树渲染：文件夹可展开折叠，筛选时自动全展开并只留命中分支 */
+function renderKbNoteList() {
+  const q = kbBrowser.filter.trim().toLowerCase();
+  let files = kbBrowser.files;
+  if (q) files = files.filter((f) => f.name.toLowerCase().includes(q) || (f.dir || '').toLowerCase().includes(q));
+  const tree = kbTreeOf(files);
+  const filtering = Boolean(q);
+  const rows = [];
+  const walk = (node, depth) => {
+    for (const [key, d] of [...node.dirs.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name, 'zh-CN'))) {
+      const open = filtering || kbBrowser.expanded.has(key);
+      rows.push(
+        `<div class="kb-row dir" data-dir="${esc(key)}" style="padding-left:${8 + depth * 14}px">
+          <span class="tw">${open ? '▾' : '▸'}</span><span class="dn">📁 ${esc(d.name)}</span><i>${kbCountAll(d)}</i>
+        </div>`
+      );
+      if (open) walk(d, depth + 1);
+    }
+    for (const f of node.files) {
+      rows.push(
+        `<div class="kb-row file ${kbBrowser.current === f.path ? 'active' : ''}" data-path="${esc(f.path)}" title="${esc(f.path)}" style="padding-left:${8 + depth * 14 + 16}px">
+          <span class="fn">📄 ${esc(f.name)}</span><span class="when">${f.mtime ? new Date(f.mtime).toLocaleDateString('zh-CN') : ''}</span>
+        </div>`
+      );
+    }
+  };
+  walk(tree, 0);
+  $('#kbNoteList').innerHTML =
+    rows.join('') ||
+    `<div class="skeleton">${kbBrowser.files.length ? '没有匹配的笔记' : '知识库里还没有 md 笔记'}</div>`;
+}
+
+async function openKbNote(p) {
+  kbBrowser.current = p;
+  renderKbNoteList();
+  const reader = $('#kbReader');
+  reader.innerHTML = '<div class="skeleton">加载中…</div>';
+  $('#kbToc').hidden = true;
+  try {
+    const { note } = await api(`/api/kb/note?path=${encodeURIComponent(p)}`);
+    let md = note.content || '';
+    // 去掉 YAML frontmatter；双链渲染成纯文本，嵌入图标注出来
+    md = md.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+    md = md
+      .replace(/!\[\[([^\]]+)\]\]/g, '🖼 $1')
+      .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
+      .replace(/\[\[([^\]]+)\]\]/g, '$1');
+    reader.innerHTML = `
+      <div class="kb-reader-head">
+        <div style="min-width:0">
+          <div class="kb-reader-title">${esc(note.name)}</div>
+          <div class="kb-reader-meta">${esc(note.path)} · ${note.mtime ? new Date(note.mtime).toLocaleString('zh-CN') : ''} · ${fmtSize(note.size)}</div>
+        </div>
+        <div class="kb-reader-actions">
+          <button class="btn sm kb-toc-btn" id="kbTocBtn" hidden>目录</button>
+          <button class="btn sm" id="kbOpenExternal" title="用 Obsidian / Typora 等默认软件打开">用默认软件打开</button>
+        </div>
+      </div>
+      <div class="kb-reader-body">${mdLite(md)}</div>`;
+    $('#kbOpenExternal').onclick = async () => {
+      try {
+        await api('/api/kb/note/open', { method: 'POST', body: { path: note.path } });
+        toast('已用系统默认软件打开', 'ok');
+      } catch (e) {
+        toast(e.message, 'err');
+      }
+    };
+    buildKbToc(reader);
+  } catch (e) {
+    reader.innerHTML = `<div class="skeleton">${esc(e.message)}</div>`;
+  }
+}
+
+/** 笔记阅读器的标题目录：从渲染好的正文里提 h1-h4，右侧悬浮面板可跳转、随滚动高亮 */
+function buildKbToc(reader) {
+  const toc = $('#kbToc');
+  const tocBtn = $('#kbTocBtn');
+  const heads = [...reader.querySelectorAll('.kb-reader-body h1, .kb-reader-body h2, .kb-reader-body h3, .kb-reader-body h4')];
+  if (heads.length < 2) {
+    toc.hidden = true;
+    toc.innerHTML = '';
+    if (tocBtn) tocBtn.hidden = true;
+    return;
+  }
+  heads.forEach((h, i) => (h.id = `kbh-${i}`));
+  toc.innerHTML =
+    '<div class="kb-toc-head">目录<button id="kbTocClose" title="收起目录">×</button></div>' +
+    heads
+      .map((h) => {
+        const txt = h.textContent.trim().replace(/\s+/g, ' ');
+        return `<div class="kb-toc-row l${h.tagName[1]}" data-h="${h.id}" title="${esc(txt)}">${esc(txt.length > 36 ? txt.slice(0, 36) + '…' : txt)}</div>`;
+      })
+      .join('');
+  toc.hidden = false;
+  toc.scrollTop = 0;
+  if (tocBtn) {
+    tocBtn.hidden = false;
+    tocBtn.textContent = `目录 ${heads.length}`;
+    tocBtn.classList.add('on');
+    tocBtn.onclick = () => {
+      toc.hidden = !toc.hidden;
+      tocBtn.classList.toggle('on', !toc.hidden);
+      if (!toc.hidden) kbTocSpy();
+    };
+  }
+  kbTocSpy();
+}
+
+/** 滚动跟随：正文滚到哪一节，目录就高亮到哪一行 */
+function kbTocSpy() {
+  const reader = $('#kbReader');
+  const toc = $('#kbToc');
+  if (!toc || toc.hidden) return;
+  const rows = [...toc.querySelectorAll('.kb-toc-row')];
+  if (!rows.length) return;
+  const rb = reader.getBoundingClientRect();
+  let cur = rows[0].dataset.h;
+  for (const row of rows) {
+    const h = document.getElementById(row.dataset.h);
+    if (!h) continue;
+    if (h.getBoundingClientRect().top - rb.top <= 72) cur = row.dataset.h;
+    else break;
+  }
+  rows.forEach((r) => r.classList.toggle('active', r.dataset.h === cur));
+  const act = toc.querySelector('.kb-toc-row.active');
+  if (act) {
+    const top = act.offsetTop;
+    if (top < toc.scrollTop + 8 || top + act.offsetHeight > toc.scrollTop + toc.clientHeight - 8) {
+      toc.scrollTop = top - toc.clientHeight / 2 + act.offsetHeight / 2;
+    }
+  }
+}
 
 async function loadKb() {
   try {
@@ -1252,6 +1698,7 @@ async function loadKb() {
   } catch (e) {
     $('#vaultNotes').innerHTML = `<div class="skeleton">${esc(e.message)}</div>`;
   }
+  loadKbBrowser();
 }
 
 /* ---------------- 设置 ---------------- */
@@ -1346,18 +1793,41 @@ async function loadSettings() {
 
     <div class="card">
       <h3>检索与监控</h3>
-      <p class="desc">DuckDuckGo 免 Key，适合全网；搜狗微信专查公众号文章；Tavily 需 Key，质量最稳。</p>
-      <div class="field"><label>默认搜索源</label>
+      <p class="desc">公众号走「搜狗微信（最多 10 页）+ 百度 site:mp.weixin.qq.com」双源；网页走百度 / 360 / Bing 并行，失败自动熔断跳过。</p>
+      <div class="field"><label>默认搜索源（网页侧首选）</label>
         <select id="setProvider">
-          <option value="duckduckgo" ${s.search.provider === 'duckduckgo' ? 'selected' : ''}>DuckDuckGo（免 Key，推荐）</option>
-          <option value="sogou" ${s.search.provider === 'sogou' ? 'selected' : ''}>搜狗微信（公众号文章）</option>
+          <option value="baidu" ${s.search.provider === 'baidu' ? 'selected' : ''}>百度（国内最稳，推荐）</option>
           <option value="bing" ${s.search.provider === 'bing' ? 'selected' : ''}>Bing</option>
+          <option value="duckduckgo" ${s.search.provider === 'duckduckgo' ? 'selected' : ''}>DuckDuckGo（多数网络不可达，会被跳过）</option>
+          <option value="sogou-web" ${s.search.provider === 'sogou-web' ? 'selected' : ''}>搜狗网页</option>
           <option value="tavily" ${s.search.provider === 'tavily' ? 'selected' : ''}>Tavily</option>
         </select></div>
       <div class="field"><label>Tavily API Key</label><input type="password" id="setTavily" value="${esc(s.search.tavilyKey)}"></div>
       <div class="field-row">
-        <div class="field"><label>单次结果数</label><input type="text" id="setMax" value="${esc(s.search.maxResults)}"></div>
+        <div class="field"><label>GitHub Token（可选，情报源加速）</label><input type="password" id="setGithubToken" value="${esc(s.search.githubToken || '')}"></div>
+        <div class="field"><label>NVD API Key（可选）</label><input type="password" id="setNvdKey" value="${esc(s.search.nvdApiKey || '')}"></div>
+      </div>
+      <div class="field"><label>公众号 RSS 订阅（一行一个 feed 地址，如 wechat2rss.xlab.app；配置后公众号监控多一路免验证码的源）</label>
+        <textarea id="setWxFeeds" rows="3" placeholder="https://wechat2rss.xlab.app/feed/xxxx.xml">${esc((s.search.weixinFeeds || []).join('\n'))}</textarea></div>
+      <div class="field"><label>监控 Webhook（钉钉/飞书/企业微信机器人地址或自定义 JSON 接口，命中新内容立即推送）</label>
+        <input type="text" id="setWebhook" value="${esc(s.watch.webhookUrl || '')}" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..."></div>
+      <div class="field-row">
+        <div class="field"><label>钉钉加签密钥（可选）</label><input type="text" id="setWebhookSecret" value="${esc(s.watch.webhookSecret || '')}"></div>
+        <div class="field"><label>Telegram Chat ID（用 TG 推送时填）</label><input type="text" id="setTgChat" value="${esc(s.watch.telegramChatId || '')}"></div>
+      </div>
+      <div class="field"><label>监控日报 Markdown 目录（留空 = 自动写入知识库的「监控」目录，Obsidian 直接能看能编辑）</label>
+        <input type="text" id="setWatchMdDir" value="${esc(s.watch.markdownDir || '')}" placeholder="例如 D:\\Notes\\监控"></div>
+      <div class="field-row">
+        <div class="field"><label>单次结果上限</label><input type="text" id="setMax" value="${esc(s.search.maxResults)}"></div>
+        <div class="field"><label>公众号翻页数（1-10）</label><input type="text" id="setWxPages" value="${esc(s.search.wechatPages)}"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>网页翻页数（1-4）</label><input type="text" id="setWebPages" value="${esc(s.search.webPages)}"></div>
+        <div class="field"><label>即时解析真链条数</label><input type="text" id="setResolveLinks" value="${esc(s.search.resolveLinks)}"></div>
+      </div>
+      <div class="field-row">
         <div class="field"><label>监控基础间隔（分钟）</label><input type="text" id="setWatchInterval" value="${esc(s.watch.intervalMin)}"></div>
+        <div class="field"><label>监控默认翻页数</label><input type="text" id="setWatchPages" value="${esc(s.watch.pages)}"></div>
       </div>
       <button class="btn sm primary" id="saveSettings2">保存</button>
     </div>
@@ -1369,6 +1839,32 @@ async function loadSettings() {
       <label class="mini-check"><input type="checkbox" id="setHeadless" ${s.browser.headless !== false ? 'checked' : ''}> 无头模式</label>
       <div class="hint">当前：${esc(browser || '未找到，请手动指定')}</div>
       <button class="btn sm primary" id="saveSettings3" style="margin-top:12px">保存</button>
+    </div>
+
+    <div class="card">
+      <h3>个性化背景</h3>
+      <p class="desc">上传一张照片当应用背景，下面所有参数拖动即时生效；图片只保存在本机数据目录。</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn sm" id="bgUploadBtn">上传背景图片</button>
+        <input type="file" id="bgFile" accept="image/*" hidden>
+        <button class="btn sm ghost" id="bgClearBtn">恢复默认</button>
+      </div>
+      <div class="field-row" style="margin-top:10px">
+        <div class="field"><label>遮暗（<span id="bgDimVal"></span>）</label><input type="range" id="bgDim" min="0" max="85" value="${Math.round((Number(s.ui?.dim) || 0.45) * 100)}"></div>
+        <div class="field"><label>背景模糊（<span id="bgBlurVal"></span>）</label><input type="range" id="bgBlur" min="0" max="30" value="${Number(s.ui?.blur) || 0}"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>面板浓度（<span id="bgPanelVal"></span>，越高字越清楚）</label><input type="range" id="bgPanel" min="20" max="100" value="${Math.round((Number(s.ui?.panel) || 0.66) * 100)}"></div>
+        <div class="field"><label>背景饱和度（<span id="bgSatVal"></span>）</label><input type="range" id="bgSat" min="0" max="200" value="${Math.round((Number(s.ui?.saturate) ?? 1) * 100)}"></div>
+      </div>
+      <div class="field"><label>图片填充方式</label>
+        <select id="bgFit">
+          <option value="cover" ${s.ui?.fit !== 'contain' && s.ui?.fit !== 'fill' && s.ui?.fit !== 'center' ? 'selected' : ''}>填满裁剪（推荐）</option>
+          <option value="contain" ${s.ui?.fit === 'contain' ? 'selected' : ''}>完整显示（不裁剪）</option>
+          <option value="fill" ${s.ui?.fit === 'fill' ? 'selected' : ''}>拉伸铺满</option>
+          <option value="center" ${s.ui?.fit === 'center' ? 'selected' : ''}>原始大小居中</option>
+        </select></div>
+      <div class="hint">当前：${s.ui?.background ? '已设置自定义背景' : '默认背景'}；觉得糊就把「背景模糊」调回 0，嫌字看不清就把「面板浓度」调高。</div>
     </div>
   `;
 
@@ -1423,9 +1919,22 @@ async function loadSettings() {
       search: {
         provider: $('#setProvider').value,
         tavilyKey: $('#setTavily').value.trim(),
-        maxResults: Number($('#setMax').value) || 12,
+        githubToken: $('#setGithubToken')?.value.trim() || '',
+        nvdApiKey: $('#setNvdKey')?.value.trim() || '',
+        weixinFeeds: ($('#setWxFeeds')?.value || '').split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 30),
+        maxResults: Number($('#setMax').value) || 40,
+        wechatPages: Math.min(10, Math.max(1, Number($('#setWxPages').value) || 5)),
+        webPages: Math.min(4, Math.max(1, Number($('#setWebPages').value) || 3)),
+        resolveLinks: Math.min(30, Math.max(0, Number($('#setResolveLinks').value) || 8)),
       },
-      watch: { intervalMin: Number($('#setWatchInterval').value) || 30 },
+      watch: {
+        intervalMin: Number($('#setWatchInterval').value) || 20,
+        pages: Number($('#setWatchPages').value) || 5,
+        webhookUrl: $('#setWebhook')?.value.trim() || '',
+        webhookSecret: $('#setWebhookSecret')?.value.trim() || '',
+        telegramChatId: $('#setTgChat')?.value.trim() || '',
+        markdownDir: $('#setWatchMdDir')?.value.trim() || '',
+      },
       browser: { executablePath: $('#setBrowser').value.trim(), headless: $('#setHeadless').checked },
       ...extra,
     };
@@ -1444,6 +1953,66 @@ async function loadSettings() {
   $('#saveSettings2').onclick = () => save();
   $('#saveSettings3').onclick = () => save();
   $('#saveKb').onclick = () => save();
+
+  // 个性化背景：上传 / 参数滑块（即时预览 + 保存）/ 填充方式 / 恢复默认
+  applyBackground(settings.ui);
+  const bgUi = () => state.settings?.ui || {};
+  const bgLabels = () => {
+    $('#bgDimVal').textContent = `${Math.round((Number($('#bgDim').value) / 100) * 100)}%`;
+    $('#bgBlurVal').textContent = `${Number($('#bgBlur').value)}px`;
+    $('#bgPanelVal').textContent = `${Number($('#bgPanel').value)}%`;
+    $('#bgSatVal').textContent = `${Number($('#bgSat').value)}%`;
+  };
+  bgLabels();
+  $('#bgUploadBtn').onclick = () => $('#bgFile').click();
+  $('#bgFile').onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append('file', f);
+    try {
+      const res = await fetch('/api/background', { method: 'POST', body: fd });
+      const d = await res.json();
+      if (!d.ok) throw new Error(d.error || '上传失败');
+      state.settings.ui = d.ui;
+      applyBackground(d.ui);
+      toast('背景已更新', 'ok');
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+    e.target.value = '';
+  };
+  const bgApplyLive = () => {
+    const ui = bgUi();
+    ui.dim = Number($('#bgDim').value) / 100;
+    ui.blur = Number($('#bgBlur').value);
+    ui.panel = Number($('#bgPanel').value) / 100;
+    ui.saturate = Number($('#bgSat').value) / 100;
+    ui.fit = $('#bgFit').value;
+    bgLabels();
+    applyBackground(ui);
+  };
+  $('#bgDim').oninput = $('#bgBlur').oninput = $('#bgPanel').oninput = $('#bgSat').oninput = bgApplyLive;
+  $('#bgFit').onchange = bgApplyLive;
+  const bgSliderSave = async () => {
+    try {
+      await api('/api/background/settings', {
+        method: 'POST',
+        body: { dim: Number($('#bgDim').value) / 100, blur: Number($('#bgBlur').value), panel: Number($('#bgPanel').value) / 100, saturate: Number($('#bgSat').value) / 100, fit: $('#bgFit').value },
+      });
+    } catch {}
+  };
+  $('#bgDim').onchange = $('#bgBlur').onchange = $('#bgPanel').onchange = $('#bgSat').onchange = $('#bgFit').onchange = bgSliderSave;
+  $('#bgClearBtn').onclick = async () => {
+    try {
+      const r = await api('/api/background/clear', { method: 'POST', body: {} });
+      state.settings.ui = r.ui;
+      applyBackground(r.ui);
+      toast('已恢复默认背景', 'ok');
+    } catch (e) {
+      toast(e.message, 'err');
+    }
+  };
 
   const rerenderKb = () => {
     const dest = $('#kbDest').value;
@@ -1511,6 +2080,200 @@ function refreshAiBadge(ai) {
   $('#aiModel').textContent = ready ? ai.model : '未配置';
 }
 
+/* ---------------- 待办便签（记自己没完成的事） ---------------- */
+
+async function loadTodos() {
+  try {
+    const { todos } = await api('/api/todos');
+    state.todos = todos || [];
+    renderTodos();
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+/** 没拖动过的便签自动铺格子（坐标相对便签板） */
+function todoAutoPos(i, rect) {
+  const cols = Math.max(1, Math.floor((rect.width - 16) / 232));
+  const col = i % cols;
+  const row = Math.floor(i / cols);
+  return { x: 8 + col * 232, y: 8 + row * 178 };
+}
+
+/* 便签的 x/y 一直存相对便签板的坐标（兼容旧数据），渲染时换算成窗口坐标画到全窗口浮层上 */
+let lastBoardRect = null;
+
+function measureBoard() {
+  const r = $('#todoBoard').getBoundingClientRect();
+  if (r.width > 0) lastBoardRect = { left: r.left, top: r.top, width: r.width, height: r.height };
+  return lastBoardRect;
+}
+
+/** 夹到窗口可见范围：拖到哪儿都行，但至少留 48px 露边，别把便签彻底拖丢 */
+function clampNotePos(p, rect, noteW) {
+  return {
+    x: Math.min(Math.max(p.x, 48 - noteW - rect.left), window.innerWidth - 48 - rect.left),
+    y: Math.min(Math.max(p.y, 2 - rect.top), window.innerHeight - 42 - rect.top),
+  };
+}
+
+function renderTodos() {
+  const board = $('#todoBoard');
+  const layer = $('#noteFloat');
+  const todos = state.todos || [];
+  const undone = todos.filter((t) => !t.done).length;
+  const railCnt = $('#todoRailCount');
+  railCnt.hidden = !undone;
+  railCnt.textContent = undone > 99 ? '99+' : undone;
+  $('#clearDoneTodo').style.display = todos.some((t) => t.done) ? '' : 'none';
+
+  if (!todos.length) {
+    layer.hidden = true;
+    layer.innerHTML = '';
+    board.innerHTML = '<div class="skeleton">还没有便签，在上面输入第一件没完成的事吧</div>';
+    return;
+  }
+  layer.hidden = false;
+  board.innerHTML =
+    '<div class="board-hint">便签不关在这里 —— 可以拖到窗口任意位置，切到别的页面它们也一直留着；<br>回到这页就能统一整理，📌 固定后不怕误拖</div>';
+  const rect = measureBoard() || lastBoardRect || { left: 90, top: 150, width: 860, height: 520 };
+  // 布局顺序：固定在前，未完成在中（新的在前），已完成垫底
+  const ordered = [...todos].sort(
+    (a, b) => (b.pinned - a.pinned) || (a.done - b.done) || String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+  );
+  let autoI = 0;
+  layer.innerHTML = ordered
+    .map((t) => {
+      const hasPos = typeof t.x === 'number' && t.x !== null && typeof t.y === 'number' && t.y !== null;
+      const pos = hasPos ? clampNotePos({ x: t.x, y: t.y }, rect, 216) : todoAutoPos(autoI++, rect);
+      return `<div class="todo-note c-${esc(t.color || 'amber')} ${t.done ? 'done' : ''} ${t.pinned ? 'pinned' : ''}" data-id="${t.id}" style="left:${Math.round(pos.x)}px;top:${Math.round(pos.y)}px">
+        <div class="todo-head">
+          <button class="t-pin" title="${t.pinned ? '取消固定（恢复可拖动）' : '固定位置，防止误拖'}">${t.pinned ? '📌' : '📍'}</button>
+          <span class="t-date">${t.createdAt ? new Date(t.createdAt).toLocaleDateString('zh-CN') : ''}</span>
+          <button class="t-del" title="删除">×</button>
+        </div>
+        <div class="t-text" title="双击编辑内容">${esc(t.text)}</div>
+        <div class="todo-foot">
+          ${t.done ? '<button class="t-reopen" title=' + '"还没做完，恢复到待办">' + '↩ 没做完</button>' : '<button class="t-done" title="这件事做完了">✓ 完成</button>'}
+        </div>
+      </div>`;
+    })
+    .join('');
+  layer.querySelectorAll('.todo-note').forEach((el) => {
+    bindTodoDrag(el, todos.find((x) => x.id === el.dataset.id));
+  });
+}
+
+function bindTodoDrag(el, t) {
+  if (!t) return;
+  el.addEventListener('mousedown', (e) => {
+    if (t.pinned || e.target.closest('button') || e.target.isContentEditable) return;
+    e.preventDefault();
+    const rect = measureBoard() || lastBoardRect || { left: 0, top: 0 };
+    const noteRect = el.getBoundingClientRect();
+    const ox = e.clientX - noteRect.left;
+    const oy = e.clientY - noteRect.top;
+    el.classList.add('dragging');
+    el.style.zIndex = 60;
+    const move = (ev) => {
+      // 想拖到哪就拖到哪：整个窗口都行，不再圈在待办板里
+      const p = clampNotePos({ x: ev.clientX - ox - rect.left, y: ev.clientY - oy - rect.top }, rect, noteRect.width);
+      el.style.left = `${Math.round(p.x)}px`;
+      el.style.top = `${Math.round(p.y)}px`;
+    };
+    const up = async () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      el.classList.remove('dragging');
+      el.style.zIndex = '';
+      t.x = Math.round(parseFloat(el.style.left) || 0);
+      t.y = Math.round(parseFloat(el.style.top) || 0);
+      try {
+        await api(`/api/todos/${t.id}`, { method: 'PATCH', body: { x: t.x, y: t.y } });
+      } catch {}
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+  // 双击编辑内容
+  const text = el.querySelector('.t-text');
+  text.addEventListener('dblclick', () => {
+    if (t.done) return;
+    text.contentEditable = 'true';
+    text.focus();
+    const sel = document.getSelection();
+    if (sel) sel.selectAllChildren(text);
+  });
+  text.addEventListener('blur', async () => {
+    if (text.contentEditable !== 'true') return;
+    text.contentEditable = 'false';
+    const v = text.textContent.trim().slice(0, 200);
+    if (v && v !== t.text) {
+      t.text = v;
+      try {
+        await api(`/api/todos/${t.id}`, { method: 'PATCH', body: { text: v } });
+        toast('便签已更新', 'ok', 1500);
+      } catch (e) {
+        toast(e.message, 'err');
+      }
+    } else {
+      text.textContent = t.text;
+    }
+  });
+  text.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      text.blur();
+    }
+  });
+}
+
+async function addTodo() {
+  const input = $('#todoInput');
+  const text = input.value.trim();
+  if (!text) return toast('先写点内容', 'err');
+  input.value = '';
+  try {
+    const { todo } = await api('/api/todos', { method: 'POST', body: { text } });
+    state.todos = [todo, ...(state.todos || [])];
+    renderTodos();
+    toast('记下了，做完记得回来打勾', 'ok');
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+/* ---------------- 自定义背景 ---------------- */
+
+function applyBackground(ui) {
+  const layer = $('#bgLayer');
+  const cfg = ui || state.settings?.ui || {};
+  if (cfg.background) {
+    layer.hidden = false;
+    layer.style.backgroundImage = `url("${cfg.background}")`;
+    const fit = cfg.fit || 'cover';
+    layer.style.backgroundSize = fit === 'fill' ? '100% 100%' : fit;
+    layer.style.backgroundRepeat = 'no-repeat';
+    layer.style.backgroundPosition = 'center';
+    const blur = Number(cfg.blur) || 0;
+    const dim = Number(cfg.dim ?? 0.45) || 0;
+    const sat = Number(cfg.saturate ?? 1);
+    const parts = [];
+    if (blur > 0) parts.push(`blur(${blur}px)`);
+    if (dim > 0) parts.push(`brightness(${(1 - Math.min(0.85, dim)).toFixed(2)})`);
+    if (Number.isFinite(sat) && sat !== 1) parts.push(`saturate(${sat})`);
+    layer.style.filter = parts.join(' ') || 'none';
+    layer.style.transform = blur > 0 ? 'scale(1.06)' : 'none';
+    // 面板浓度：半透明面板统一走这个 CSS 变量
+    const panel = Number(cfg.panel ?? 0.66);
+    document.body.style.setProperty('--panel-a', String(Number.isFinite(panel) ? panel : 0.66));
+    document.body.classList.add('has-bg');
+  } else {
+    layer.hidden = true;
+    document.body.classList.remove('has-bg');
+  }
+}
+
 /* ---------------- 视图切换 ---------------- */
 
 function switchView(view) {
@@ -1518,7 +2281,7 @@ function switchView(view) {
   $('#selToolbar').hidden = true;
   $$('.rail-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   $$('.main > .view').forEach((v) => (v.hidden = true));
-  const map = { convert: '#viewConvert', search: '#viewSearch', watch: '#viewWatch', knowledge: '#viewKnowledge', settings: '#viewSettings' };
+  const map = { convert: '#viewConvert', search: '#viewSearch', todo: '#viewTodo', watch: '#viewWatch', knowledge: '#viewKnowledge', settings: '#viewSettings' };
   $(map[view]).hidden = false;
   $('#listPane').style.display = view === 'convert' ? '' : 'none';
   $('#viewTabs').hidden = !(view === 'convert' && state.current);
@@ -1526,7 +2289,7 @@ function switchView(view) {
     view === 'convert' ? '' : '66px minmax(0,1fr) 372px';
 
   // 顶部标题栏跟随视图
-  const titles = { search: '全网检索', watch: '内容监控', knowledge: '知识库', settings: '设置' };
+  const titles = { search: '全网检索', todo: '待办便签', watch: '内容监控', knowledge: '知识库', settings: '设置' };
   $('#topbarActions').style.display = view === 'convert' ? '' : 'none';
   $('#docTitle').textContent = view === 'convert' ? state.current?.title || '未选择文章' : titles[view];
 
@@ -1540,6 +2303,7 @@ function switchView(view) {
       };
     });
   }
+  if (view === 'todo') loadTodos();
   if (view === 'watch') loadWatches();
   if (view === 'knowledge') loadKb();
   if (view === 'settings') loadSettings();
@@ -1565,7 +2329,25 @@ function bind() {
   $('#refreshLib').onclick = loadLibrary;
   $('#libFilter').oninput = renderLibrary;
 
+  $('#tagFilterBar').onclick = (e) => {
+    const b = e.target.closest('[data-tag]');
+    if (!b) return;
+    state.tagFilter = state.tagFilter === b.dataset.tag ? '' : b.dataset.tag;
+    renderLibrary();
+  };
+
+  $('#todoBadge').onclick = () => {
+    state.tagFilter = state.tagFilter === '未完成' ? '' : '未完成';
+    renderLibrary();
+  };
+
   $('#articleList').onclick = async (e) => {
+    const tagEdit = e.target.closest('[data-tagedit]');
+    if (tagEdit) {
+      e.stopPropagation();
+      openTagEditor(tagEdit.dataset.tagedit);
+      return;
+    }
     const del = e.target.closest('[data-del]');
     if (del) {
       e.stopPropagation();
@@ -1609,7 +2391,10 @@ function bind() {
         body: {
           query,
           intervalMin: Number($('#watchInterval').value),
-          wechatOnly: $('#watchWechat').checked,
+          sources: $('#watchSource')?.value || 'all',
+          wechatOnly: ($('#watchSource')?.value || 'all') === 'wechat',
+          timeRange: $('#watchTime').value,
+          pages: Number($('#watchPages').value) || 5,
         },
       });
       $('#watchInput').value = '';
@@ -1628,7 +2413,12 @@ function bind() {
       check.innerHTML = '<span class="spinner"></span>';
       try {
         const r = await api(`/api/watches/${check.dataset.check}/check`, { method: 'POST', body: {} });
-        toast(r.fresh ? `发现 ${r.fresh} 条内容` : '暂无新内容', r.fresh ? 'ok' : 'info');
+        const msg = r.firstRun
+          ? `已建立基线（${r.baseline} 条，之后只推新内容）`
+          : r.fresh
+          ? `发现 ${r.fresh} 条新内容${r.backfill ? `，另有 ${r.backfill} 条旧文补录` : ''}`
+          : `暂无新内容（本次抓到 ${r.total ?? 0} 条）`;
+        toast(msg, r.fresh ? 'ok' : 'info');
         loadWatches();
       } catch (err) {
         toast(err.message, 'err');
@@ -1644,6 +2434,86 @@ function bind() {
   };
 
   $('#scanVaultBtn').onclick = loadKb;
+
+  $('#addTodoBtn').onclick = addTodo;
+  $('#todoInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addTodo();
+  });
+  $('#noteFloat').addEventListener('click', async (e) => {
+    const note = e.target.closest('.todo-note');
+    if (!note) return;
+    const t = (state.todos || []).find((x) => x.id === note.dataset.id);
+    if (!t) return;
+    if (e.target.closest('.t-pin')) {
+      t.pinned = !t.pinned;
+      try {
+        await api(`/api/todos/${t.id}`, { method: 'PATCH', body: { pinned: t.pinned } });
+        renderTodos();
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    } else if (e.target.closest('.t-del')) {
+      if (!confirm('删除这条便签？')) return;
+      try {
+        await api(`/api/todos/${t.id}`, { method: 'DELETE' });
+        state.todos = state.todos.filter((x) => x.id !== t.id);
+        renderTodos();
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    } else if (e.target.closest('.t-done') || e.target.closest('.t-reopen')) {
+      t.done = !t.done;
+      try {
+        await api(`/api/todos/${t.id}`, { method: 'PATCH', body: { done: t.done } });
+        renderTodos();
+        if (t.done) toast('完成一件，舒服', 'ok', 1600);
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    }
+  });
+  $('#clearDoneTodo').onclick = async () => {
+    const done = (state.todos || []).filter((t) => t.done);
+    if (!done.length) return;
+    if (!confirm(`清空 ${done.length} 条已完成的便签？`)) return;
+    await Promise.allSettled(done.map((t) => api(`/api/todos/${t.id}`, { method: 'DELETE' })));
+    loadTodos();
+  };
+
+  // 窗口变了大小，把便签重新锚定回可见范围
+  window.addEventListener('resize', () => {
+    if ((state.todos || []).length) renderTodos();
+  });
+
+  $('#kbRefreshBtn').onclick = loadKbBrowser;
+  $('#kbNoteFilter').oninput = (e) => {
+    kbBrowser.filter = e.target.value;
+    renderKbNoteList();
+  };
+  $('#kbNoteList').onclick = (e) => {
+    const dirRow = e.target.closest('[data-dir]');
+    if (dirRow) {
+      const k = dirRow.dataset.dir;
+      if (kbBrowser.expanded.has(k)) kbBrowser.expanded.delete(k);
+      else kbBrowser.expanded.add(k);
+      renderKbNoteList();
+      return;
+    }
+    const item = e.target.closest('[data-path]');
+    if (item) openKbNote(item.dataset.path);
+  };
+  // 阅读器标题目录：点行跳转，滚正文高亮
+  $('#kbReader').addEventListener('scroll', kbTocSpy);
+  $('#kbToc').addEventListener('click', (e) => {
+    if (e.target.closest('#kbTocClose')) {
+      $('#kbToc').hidden = true;
+      $('#kbTocBtn')?.classList.remove('on');
+      return;
+    }
+    const row = e.target.closest('.kb-toc-row');
+    const h = row && document.getElementById(row.dataset.h);
+    if (h) h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
   $('#reloadPreview').onclick = () => {
     const f = $('#previewFrame');
     f.src = f.src.split('?')[0] + '?t=' + Date.now();
@@ -1695,6 +2565,9 @@ function bind() {
   es.addEventListener('library:update', () => {
     if (state.view === 'convert') loadLibrary();
   });
+  es.addEventListener('todos:update', () => {
+    if (state.view === 'todo') loadTodos();
+  });
 }
 
 /* ---------------- 启动 ---------------- */
@@ -1706,6 +2579,11 @@ async function init() {
     state.status = st;
     state.presets = st.presets || [];
     refreshAiBadge(st.ai);
+    applyBackground(st.ui);
+    const ver = $('#afVersion');
+    if (ver && st.version) ver.textContent = `当前版本 v${st.version}`;
+    // 窗口标题直接带版本号，一眼确认运行的不是旧包
+    if (st.version) document.title = `ArticleForge v${st.version} · 文章转换与知识沉淀`;
     $('#aiHint').textContent = st.ai.ready ? st.ai.model : 'AI 未配置，去设置';
     if (!st.ai.ready) {
       setTimeout(() => toast('AI 功能未配置：到「设置」填入 API 地址与密钥后即可划词提问与知识整理', 'info', 7000), 1200);

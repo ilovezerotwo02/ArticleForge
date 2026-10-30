@@ -7,20 +7,21 @@ import {
   PUBLIC, MEDIA, EXPORTS, DATA, ROOT, settings, saveSettings, findBrowser,
 } from './src/config.js';
 import {
-  listArticles, getArticle, saveArticle, deleteArticle, addSseClient, emit, chatStore, watchStore,
+  listArticles, getArticle, saveArticle, deleteArticle, addSseClient, emit, chatStore, watchStore, todoStore, hashId,
 } from './src/store.js';
 import { buildArticle } from './src/extract.js';
 import { ingestFile } from './src/ingest.js';
 import { exportArticle, zipDir, safeName } from './src/export.js';
 import { renderReadingHtml } from './src/render.js';
-import { searchWeb, buildRelatedQueries } from './src/search.js';
-import { addWatch, checkWatch, startWatcher } from './src/watch.js';
+import { searchWeb, buildRelatedQueries, searchHealth, openSogouVerify } from './src/search.js';
+import { addWatch, checkWatch, updateWatch, startWatcher } from './src/watch.js';
 import {
   aiStatus, streamChat, organizeKnowledge, CHAT_SYSTEM, buildArticleContext, selectionPrompt, FORMAT_PRESETS, aiConfig, restructureHeadings, pickTargetFile,
 } from './src/ai.js';
 import {
   kbStatus, kbTest, kbWrite, kbList, listHistory, destinations, getAdapter, currentKey,
   listCategories, previewTarget, kbTree, treeText, dirMeta, nodeByPath,
+  kbFiles, kbReadNote, kbOpenNote,
 } from './src/kb/index.js';
 import { closeBrowser } from './src/fetchPage.js';
 
@@ -50,8 +51,97 @@ app.get('/api/status', (req, res) => {
     kb: kbStatus(),
     counts: { articles: listArticles().length, watches: watchStore.list().length },
     presets: Object.entries(FORMAT_PRESETS).map(([key, v]) => ({ key, ...v })),
-    version: '1.0.0',
+    ui: s.ui || {},
+    version: '1.0.5',
   });
+});
+
+/* ---------------- 待办便签（用户自己记没完成的事） ---------------- */
+
+const TODO_COLORS = ['amber', 'mint', 'sky', 'rose', 'lilac'];
+
+app.get('/api/todos', (req, res) => ok(res, { todos: todoStore.list() }));
+
+app.post('/api/todos', (req, res) => {
+  const text = String(req.body?.text || '').trim().slice(0, 200);
+  if (!text) return fail(res, new Error('先写点内容'));
+  const colors = TODO_COLORS;
+  const item = todoStore.add({
+    id: hashId(text + Date.now()),
+    text,
+    done: false,
+    pinned: false,
+    color: colors[todoStore.list().length % colors.length],
+    x: null,
+    y: null,
+    createdAt: new Date().toISOString(),
+  });
+  emit('todos:update', {});
+  ok(res, { todo: item });
+});
+
+app.patch('/api/todos/:id', (req, res) => {
+  const patch = {};
+  for (const k of ['text', 'done', 'pinned', 'color', 'x', 'y']) {
+    if (req.body?.[k] !== undefined) patch[k] = req.body[k];
+  }
+  if (patch.text !== undefined) patch.text = String(patch.text).trim().slice(0, 200) || '（空便签）';
+  if (patch.color !== undefined && !TODO_COLORS.includes(patch.color)) delete patch.color;
+  for (const k of ['x', 'y']) if (patch[k] !== null) patch[k] = Number(patch[k]) || 0;
+  const t = todoStore.update(req.params.id, patch);
+  if (!t) return fail(res, new Error('便签不存在'), 404);
+  ok(res, { todo: t });
+});
+
+app.delete('/api/todos/:id', (req, res) => ok(res, { removed: todoStore.remove(req.params.id) }));
+
+/* ---------------- 自定义背景 ---------------- */
+
+const BG_EXTS = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/bmp': 'bmp' };
+
+app.post('/api/background', upload.single('file'), (req, res) => {
+  const f = req.file;
+  const ext = BG_EXTS[f?.mimetype];
+  if (!f || !ext) return fail(res, new Error('请上传 jpg / png / webp / gif / bmp 图片'));
+  try {
+    for (const e of Object.values(BG_EXTS)) fs.rmSync(path.join(MEDIA, `app-background.${e}`), { force: true });
+    const file = path.join(MEDIA, `app-background.${ext}`);
+    fs.writeFileSync(file, f.buffer);
+    const next = saveSettings({ ui: { background: `/media/app-background.${ext}?t=${Date.now()}` } });
+    ok(res, { ui: next.ui });
+  } catch (e) {
+    fail(res, e, 500);
+  }
+});
+
+app.post('/api/background/settings', (req, res) => {
+  try {
+    const patch = {};
+    if (req.body?.dim !== undefined) patch.dim = Math.max(0, Math.min(0.85, Number(req.body.dim) || 0));
+    if (req.body?.blur !== undefined) patch.blur = Math.max(0, Math.min(30, Number(req.body.blur) || 0));
+    if (req.body?.panel !== undefined) patch.panel = Math.max(0.2, Math.min(1, Number(req.body.panel) || 0.66));
+    if (req.body?.saturate !== undefined) {
+      const n = Number(req.body.saturate);
+      patch.saturate = Number.isFinite(n) ? Math.max(0, Math.min(2, n)) : 1;
+    }
+    if (req.body?.fit !== undefined) {
+      patch.fit = ['cover', 'contain', 'fill', 'center'].includes(req.body.fit) ? req.body.fit : 'cover';
+    }
+    const next = saveSettings({ ui: patch });
+    ok(res, { ui: next.ui });
+  } catch (e) {
+    fail(res, e, 500);
+  }
+});
+
+app.post('/api/background/clear', (req, res) => {
+  try {
+    for (const e of Object.values(BG_EXTS)) fs.rmSync(path.join(MEDIA, `app-background.${e}`), { force: true });
+    const next = saveSettings({ ui: { background: '' } });
+    ok(res, { ui: next.ui });
+  } catch (e) {
+    fail(res, e, 500);
+  }
 });
 
 /* ---------------- 抓取 / 导入 ---------------- */
@@ -95,7 +185,7 @@ function publicArticle(a) {
   return {
     id: a.id, title: a.title, url: a.url, finalUrl: a.finalUrl, source: a.source, sourceKind: a.sourceKind,
     account: a.account, author: a.author, publishedAt: a.publishedAt, cover: a.cover, words: a.words,
-    assets: a.assets?.length || 0, outline: a.outline, tags: a.tags, summary: a.summary,
+    assets: a.assets?.length || 0, outline: a.outline, tags: a.tags, userTags: a.userTags || [], summary: a.summary,
     createdAt: a.createdAt, headingCount: a.headingCount, filename: a.filename, rendered: a.rendered,
     warnings: a.warnings || [],
   };
@@ -119,6 +209,12 @@ app.patch('/api/articles/:id', (req, res) => {
   const a = getArticle(req.params.id);
   if (!a) return fail(res, new Error('文章不存在'), 404);
   if (Array.isArray(req.body?.tags)) a.tags = req.body.tags.slice(0, 12);
+  // 用户自建标签：与 AI 生成的 tags 分开存，去重、限长、限个数
+  if (Array.isArray(req.body?.userTags)) {
+    a.userTags = [...new Set(
+      req.body.userTags.map((t) => String(t).trim().slice(0, 24)).filter(Boolean)
+    )].slice(0, 12);
+  }
   saveArticle(a);
   ok(res, { article: publicArticle(a) });
 });
@@ -179,10 +275,23 @@ app.get('/api/download', (req, res) => {
 /* ---------------- 检索 ---------------- */
 
 app.post('/api/search', async (req, res) => {
-  const { query, provider, max, wechatOnly, sources, timeRange, sortBy } = req.body || {};
+  const { query, provider, max, wechatOnly, sources, timeRange, sortBy, pages, fresh } = req.body || {};
   if (!query?.trim()) return fail(res, new Error('请输入检索关键词'));
   try {
-    ok(res, await searchWeb(query.trim(), { provider, max, wechatOnly, sources, timeRange, sortBy }));
+    ok(res, await searchWeb(query.trim(), { provider, max, wechatOnly, sources, timeRange, sortBy, pages, fresh }));
+  } catch (e) {
+    fail(res, e, 500);
+  }
+});
+
+app.get('/api/search/health', (req, res) => ok(res, { sources: searchHealth() }));
+
+// 人工过验证：弹出真实浏览器窗口，点完验证码后把会话 Cookie 留给服务端复用
+app.post('/api/search/verify', async (req, res) => {
+  res.setTimeout(0);
+  try {
+    const out = await openSogouVerify({ timeoutMs: 180000, query: String(req.body?.query || '微信') });
+    ok(res, out);
   } catch (e) {
     fail(res, e, 500);
   }
@@ -209,9 +318,21 @@ app.post('/api/articles/:id/related', async (req, res) => {
 app.get('/api/watches', (req, res) => ok(res, { watches: watchStore.list() }));
 
 app.post('/api/watches', (req, res) => {
-  const { query, provider, intervalMin, wechatOnly, label } = req.body || {};
+  const { query, provider, intervalMin, wechatOnly, label, pages, timeRange, max, sources } = req.body || {};
   if (!query?.trim()) return fail(res, new Error('请输入监控关键词'));
-  ok(res, { watch: addWatch({ query, provider, intervalMin, wechatOnly, label }) });
+  ok(res, { watch: addWatch({ query, provider, intervalMin, wechatOnly, label, pages, timeRange, max, sources }) });
+});
+
+app.patch('/api/watches/:id', async (req, res) => {
+  try {
+    const patch = {};
+    for (const k of ['enabled', 'intervalMin', 'pages', 'timeRange', 'wechatOnly', 'sources', 'label']) {
+      if (req.body?.[k] !== undefined) patch[k] = req.body[k];
+    }
+    ok(res, { watch: await updateWatch(req.params.id, patch) });
+  } catch (e) {
+    fail(res, e, 400);
+  }
 });
 
 app.delete('/api/watches/:id', (req, res) => {
@@ -461,11 +582,17 @@ app.post('/api/ai/organize', async (req, res) => {
 
 app.get('/api/settings', (req, res) => {
   const s = settings();
+  const mask = (v) => (v ? '••••••' : '');
   ok(res, {
     settings: {
       ...s,
       ai: { ...s.ai, apiKey: s.ai.apiKey ? '••••••' + String(s.ai.apiKey).slice(-4) : '' },
-      search: { ...s.search, tavilyKey: s.search.tavilyKey ? '••••••' : '' },
+      search: {
+        ...s.search,
+        tavilyKey: mask(s.search.tavilyKey),
+        githubToken: mask(s.search.githubToken),
+        nvdApiKey: mask(s.search.nvdApiKey),
+      },
       siyuan: { ...s.siyuan, token: s.siyuan.token ? '••••••' + String(s.siyuan.token).slice(-4) : '' },
       notion: { ...s.notion, token: s.notion.token ? '••••••' + String(s.notion.token).slice(-4) : '' },
     },
@@ -480,10 +607,13 @@ app.get('/api/settings', (req, res) => {
 app.post('/api/settings', (req, res) => {
   const patch = { ...(req.body || {}) };
   // 前端回传掩码时不覆盖原值
-  if (patch.ai?.apiKey === '' || /^••/.test(patch.ai?.apiKey || '')) delete patch.ai.apiKey;
-  if (patch.search?.tavilyKey === '' || /^••/.test(patch.search?.tavilyKey || '')) delete patch.search.tavilyKey;
-  if (patch.siyuan?.token === '' || /^••/.test(patch.siyuan?.token || '')) delete patch.siyuan?.token;
-  if (patch.notion?.token === '' || /^••/.test(patch.notion?.token || '')) delete patch.notion?.token;
+  const isMasked = (v) => v === '' || /^••/.test(v);
+  if (isMasked(patch.ai?.apiKey)) delete patch.ai.apiKey;
+  if (isMasked(patch.search?.tavilyKey)) delete patch.search.tavilyKey;
+  if (isMasked(patch.search?.githubToken)) delete patch.search.githubToken;
+  if (isMasked(patch.search?.nvdApiKey)) delete patch.search.nvdApiKey;
+  if (isMasked(patch.siyuan?.token)) delete patch.siyuan?.token;
+  if (isMasked(patch.notion?.token)) delete patch.notion?.token;
   try {
     const next = saveSettings(patch);
     if (patch.browser?.executablePath !== undefined) closeBrowser().catch(() => {});
@@ -542,6 +672,32 @@ app.get('/api/kb/notes', async (req, res) => {
     ok(res, await kbList(Number(req.query.limit || 30)));
   } catch (e) {
     fail(res, e, 500);
+  }
+});
+
+/* ---------------- 应用内笔记浏览（文件型知识库） ---------------- */
+
+app.get('/api/kb/files', (req, res) => {
+  try {
+    ok(res, kbFiles({ limit: Math.min(Number(req.query.limit) || 2000, 5000) }));
+  } catch (e) {
+    fail(res, e, 500);
+  }
+});
+
+app.get('/api/kb/note', (req, res) => {
+  try {
+    ok(res, { note: kbReadNote(String(req.query.path || '')) });
+  } catch (e) {
+    fail(res, e, 400);
+  }
+});
+
+app.post('/api/kb/note/open', (req, res) => {
+  try {
+    ok(res, kbOpenNote(String(req.body?.path || '')));
+  } catch (e) {
+    fail(res, e, 400);
   }
 });
 

@@ -17,6 +17,8 @@ const state = {
   search: null,
   tagFilter: '',
   todos: [],
+  // 两侧面板收起状态（Obsidian 式），记忆在 localStorage
+  panels: { list: true, ai: true },
   organizeSpec: JSON.parse(localStorage.getItem('af.organizeSpec') || 'null') || {
     preset: 'study',
     detail: 'normal',
@@ -505,7 +507,7 @@ function renderTopActions() {
   $('#btnExport').onclick = openExportModal;
 }
 
-/** 预览加载完检测：内容空白时给出提示与重试入口 */
+/** 预览加载完检测：内容空白时给出提示与重试入口；自定义背景时把正文背景改透明 */
 function onPreviewLoad() {
   const frame = $('#previewFrame');
   setTimeout(() => {
@@ -516,6 +518,18 @@ function onPreviewLoad() {
       const textLen = content ? content.textContent.trim().length : 0;
       const media = content ? content.querySelectorAll('img, pre, table, ul, ol, blockquote').length : 0;
       empty = !content || (textLen < 40 && media === 0);
+      // 半透明主题：预览文档与本应用同源，直接注入透明化样式
+      if (document.body.classList.contains('has-bg') && d && d.head && !d.getElementById('af-translucent')) {
+        const st = d.createElement('style');
+        st.id = 'af-translucent';
+        st.textContent =
+          'html,body{background:transparent !important}' +
+          '.af-toc{background:rgba(255,255,255,.62) !important}' +
+          '.af-stats span{background:rgba(255,255,255,.62) !important}' +
+          'pre{background:rgba(255,255,255,.66) !important}' +
+          'code{background:rgba(255,255,255,.6) !important}';
+        d.head.appendChild(st);
+      }
     } catch {}
     $('#previewEmpty').hidden = !empty;
     const tab = $('#openPreviewTab');
@@ -561,6 +575,10 @@ async function loadRelated(id) {
   box.innerHTML = '<div class="skeleton">正在检索相关文章…</div>';
   try {
     const { groups } = await api(`/api/articles/${id}/related`, { method: 'POST', body: {} });
+    if (!groups.length) {
+      box.innerHTML = '<div class="skeleton">这篇没有提取到可用的检索词，试试直接用「检索」页搜相关内容</div>';
+      return;
+    }
     box.innerHTML = groups
       .map(
         (g) => `<div class="rel-group">
@@ -2109,11 +2127,11 @@ function measureBoard() {
   return lastBoardRect;
 }
 
-/** 夹到窗口可见范围：拖到哪儿都行，但至少留 48px 露边，别把便签彻底拖丢 */
-function clampNotePos(p, rect, noteW) {
+/** 夹到窗口可见范围（视口坐标）：拖到哪儿都行，但至少留 48px 露边，别把便签彻底拖丢 */
+function clampNotePos(p, noteW) {
   return {
-    x: Math.min(Math.max(p.x, 48 - noteW - rect.left), window.innerWidth - 48 - rect.left),
-    y: Math.min(Math.max(p.y, 2 - rect.top), window.innerHeight - 42 - rect.top),
+    x: Math.min(Math.max(p.x, 48 - noteW), window.innerWidth - 48),
+    y: Math.min(Math.max(p.y, 2), window.innerHeight - 42),
   };
 }
 
@@ -2145,8 +2163,10 @@ function renderTodos() {
   layer.innerHTML = ordered
     .map((t) => {
       const hasPos = typeof t.x === 'number' && t.x !== null && typeof t.y === 'number' && t.y !== null;
-      const pos = hasPos ? clampNotePos({ x: t.x, y: t.y }, rect, 216) : todoAutoPos(autoI++, rect);
-      return `<div class="todo-note c-${esc(t.color || 'amber')} ${t.done ? 'done' : ''} ${t.pinned ? 'pinned' : ''}" data-id="${t.id}" style="left:${Math.round(pos.x)}px;top:${Math.round(pos.y)}px">
+      const pos = hasPos ? { x: t.x, y: t.y } : todoAutoPos(autoI++, rect);
+      // 存的是板相对坐标：先加上板在窗口里的偏移，再夹进可视范围（此前漏加偏移，便签会飞出窗口外）
+      const vp = clampNotePos({ x: rect.left + pos.x, y: rect.top + pos.y }, 216);
+      return `<div class="todo-note c-${esc(t.color || 'amber')} ${t.done ? 'done' : ''} ${t.pinned ? 'pinned' : ''}" data-id="${t.id}" style="left:${Math.round(vp.x)}px;top:${Math.round(vp.y)}px">
         <div class="todo-head">
           <button class="t-pin" title="${t.pinned ? '取消固定（恢复可拖动）' : '固定位置，防止误拖'}">${t.pinned ? '📌' : '📍'}</button>
           <span class="t-date">${t.createdAt ? new Date(t.createdAt).toLocaleDateString('zh-CN') : ''}</span>
@@ -2176,8 +2196,8 @@ function bindTodoDrag(el, t) {
     el.classList.add('dragging');
     el.style.zIndex = 60;
     const move = (ev) => {
-      // 想拖到哪就拖到哪：整个窗口都行，不再圈在待办板里
-      const p = clampNotePos({ x: ev.clientX - ox - rect.left, y: ev.clientY - oy - rect.top }, rect, noteRect.width);
+      // 想拖到哪就拖到哪：整个窗口都行，不再圈在待办板里（浮层坐标 = 视口坐标）
+      const p = clampNotePos({ x: ev.clientX - ox, y: ev.clientY - oy }, noteRect.width);
       el.style.left = `${Math.round(p.x)}px`;
       el.style.top = `${Math.round(p.y)}px`;
     };
@@ -2186,8 +2206,9 @@ function bindTodoDrag(el, t) {
       document.removeEventListener('mouseup', up);
       el.classList.remove('dragging');
       el.style.zIndex = '';
-      t.x = Math.round(parseFloat(el.style.left) || 0);
-      t.y = Math.round(parseFloat(el.style.top) || 0);
+      // 存储保持板相对坐标（兼容旧数据）：视口坐标减去板的偏移
+      t.x = Math.round((parseFloat(el.style.left) || 0) - rect.left);
+      t.y = Math.round((parseFloat(el.style.top) || 0) - rect.top);
       try {
         await api(`/api/todos/${t.id}`, { method: 'PATCH', body: { x: t.x, y: t.y } });
       } catch {}
@@ -2276,6 +2297,29 @@ function applyBackground(ui) {
 
 /* ---------------- 视图切换 ---------------- */
 
+/** 统一算栅格：视图决定资料库栏在不在，收起状态决定两栏显隐（Obsidian 式可收起） */
+function applyGrid() {
+  const showList = state.view === 'convert' && state.panels.list !== false;
+  const showAi = state.panels.ai !== false;
+  $('#listPane').style.display = state.view === 'convert' ? (showList ? '' : 'none') : 'none';
+  $('#aiPane').style.display = showAi ? '' : 'none';
+  const cols = ['66px'];
+  if (showList) cols.push('306px');
+  cols.push('minmax(0, 1fr)');
+  if (showAi) cols.push('372px');
+  document.querySelector('.app').style.gridTemplateColumns = cols.join(' ');
+  $('#listTab').hidden = showList;
+  $('#aiTab').hidden = showAi;
+}
+
+function togglePanel(which) {
+  state.panels[which] = state.panels[which] === false;
+  try {
+    localStorage.setItem('afPanels', JSON.stringify(state.panels));
+  } catch {}
+  applyGrid();
+}
+
 function switchView(view) {
   state.view = view;
   $('#selToolbar').hidden = true;
@@ -2283,10 +2327,8 @@ function switchView(view) {
   $$('.main > .view').forEach((v) => (v.hidden = true));
   const map = { convert: '#viewConvert', search: '#viewSearch', todo: '#viewTodo', watch: '#viewWatch', knowledge: '#viewKnowledge', settings: '#viewSettings' };
   $(map[view]).hidden = false;
-  $('#listPane').style.display = view === 'convert' ? '' : 'none';
   $('#viewTabs').hidden = !(view === 'convert' && state.current);
-  document.querySelector('.app').style.gridTemplateColumns =
-    view === 'convert' ? '' : '66px minmax(0,1fr) 372px';
+  applyGrid();
 
   // 顶部标题栏跟随视图
   const titles = { search: '全网检索', todo: '待办便签', watch: '内容监控', knowledge: '知识库', settings: '设置' };
@@ -2485,6 +2527,12 @@ function bind() {
     if ((state.todos || []).length) renderTodos();
   });
 
+  // 两侧面板收起 / 展开
+  $('#listCollapse').onclick = () => togglePanel('list');
+  $('#aiCollapse').onclick = () => togglePanel('ai');
+  $('#listTab').onclick = () => togglePanel('list');
+  $('#aiTab').onclick = () => togglePanel('ai');
+
   $('#kbRefreshBtn').onclick = loadKbBrowser;
   $('#kbNoteFilter').oninput = (e) => {
     kbBrowser.filter = e.target.value;
@@ -2574,6 +2622,12 @@ function bind() {
 
 async function init() {
   bind();
+  // 恢复上次的侧栏收起状态
+  try {
+    const saved = JSON.parse(localStorage.getItem('afPanels') || 'null');
+    if (saved && typeof saved === 'object') state.panels = { list: saved.list !== false, ai: saved.ai !== false };
+  } catch {}
+  applyGrid();
   try {
     const st = await api('/api/status');
     state.status = st;

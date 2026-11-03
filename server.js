@@ -52,7 +52,7 @@ app.get('/api/status', (req, res) => {
     counts: { articles: listArticles().length, watches: watchStore.list().length },
     presets: Object.entries(FORMAT_PRESETS).map(([key, v]) => ({ key, ...v })),
     ui: s.ui || {},
-    version: '1.0.5',
+    version: '1.0.6',
   });
 });
 
@@ -304,7 +304,8 @@ app.post('/api/articles/:id/related', async (req, res) => {
   const out = [];
   for (const q of queries) {
     try {
-      const r = await searchWeb(q, { max: 6, wechatOnly: false });
+      // 相关文章只要轻量快查：网页源单页，不碰搜狗公众号（慢且易反爬），几秒内返回
+      const r = await searchWeb(q, { max: 6, sources: 'web', pages: 1, provider: 'baidu', sortBy: 'relevance' });
       out.push({ query: q, results: r.results });
     } catch (e) {
       out.push({ query: q, results: [], error: e.message });

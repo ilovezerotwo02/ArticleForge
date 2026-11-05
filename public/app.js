@@ -512,6 +512,7 @@ function renderTopActions() {
   const utags = a.userTags || [];
   $('#topbarActions').innerHTML = `
     ${utags.length ? `<span class="top-tags">${utags.map((t) => `<span class="a-tag ${t === '未完成' ? 'todo' : ''}">${esc(t)}</span>`).join('')}</span>` : ''}
+    <button class="btn sm" id="btnAnnot" data-annot-toggle title="画笔 / 荧光笔 / 橡皮，直接在正文上标注"><svg class="bi" viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M13.5 7l3 3"/></svg>批注</button>
     <button class="btn sm" id="btnTags" title="编辑这篇文章的标签">${IC.tag}标签</button>
     <button class="btn sm" id="btnExport">导出 PDF · DOCX · MD</button>
     ${a.url ? `<button class="btn sm ghost" id="btnOrigin" title="查看原网页：本软件内 / 浏览器">原网页 ▾</button>` : ''}
@@ -524,6 +525,10 @@ function renderTopActions() {
     };
   }
   $('#btnTags').onclick = () => openTagEditor(a.id);
+  $('#btnAnnot').onclick = () => {
+    if (state.tab !== 'preview') setTab('preview');
+    window.Annot?.toggle('preview');
+  };
   $('#btnExport').onclick = openExportModal;
 }
 
@@ -666,6 +671,8 @@ function onPreviewLoad() {
     $('#previewEmpty').hidden = !empty;
     const tab = $('#openPreviewTab');
     if (tab && state.current) tab.href = `/api/articles/${state.current.id}/preview`;
+    if (state.current && !empty) window.Annot?.attachPreview(frame, state.current.id);
+    else window.Annot?.detach();
   }, 120);
 }
 
@@ -835,6 +842,7 @@ async function saveReader() {
 function setTab(tab) {
   state.tab = tab;
   $('#selToolbar').hidden = true;
+  if (tab !== 'preview') window.Annot?.exit();
   $$('#viewTabs .tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   const a = state.current;
   const frame = $('#previewFrame');
@@ -2313,6 +2321,7 @@ function renderKbReader() {
           editing
             ? `<button class="btn sm primary" id="kbDoneBtn" title="保存并回到阅读视图">完成</button>`
             : `<button class="btn sm kb-toc-btn" id="kbTocBtn" hidden>大纲</button>
+               <button class="btn sm" id="kbAnnotBtn" data-annot-toggle title="画笔 / 荧光笔 / 橡皮，直接在正文上标注"><svg class="bi" viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M13.5 7l3 3"/></svg>批注</button>
                <button class="btn sm" id="kbEditBtn" title="像 Obsidian 一样边写边渲染（自动保存回原文件）；也可以双击正文进入">编辑</button>
                <button class="btn sm" id="kbOpenExternal" title="选择用哪个软件打开：默认 / Obsidian / VS Code / Typora / 记事本">打开方式 ▾</button>`
         }
@@ -2320,6 +2329,7 @@ function renderKbReader() {
     </div>`;
 
   if (editing) {
+    window.Annot?.detach();
     reader.innerHTML = `${head}<div class="kb-vditor" id="kbVditor"></div>`;
     $('#kbDoneBtn').onclick = async () => {
       try {
@@ -2354,8 +2364,10 @@ function renderKbReader() {
       renderKbReader();
     };
     $('#kbEditBtn').onclick = enterEdit;
+    window.Annot?.attachKb(reader.querySelector('.kb-reader-body'), note.path, reader);
+    $('#kbAnnotBtn').onclick = () => window.Annot?.toggle('kb');
     reader.querySelector('.kb-reader-body').addEventListener('dblclick', (e) => {
-      if (!e.target.closest('a')) enterEdit();
+      if (!e.target.closest('a') && !window.Annot?.active) enterEdit();
     });
     const openBtn = $('#kbOpenExternal');
     openBtn.onclick = async () => {
@@ -3245,6 +3257,7 @@ function switchView(view) {
   }
   state.view = view;
   $('#selToolbar').hidden = true;
+  window.Annot?.exit();
   closePop();
   if (!$('#reader').hidden) closeReader();
   $$('.rail-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));

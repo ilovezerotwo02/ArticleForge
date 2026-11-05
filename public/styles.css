@@ -1476,3 +1476,34 @@ body.has-bg .toast { background: rgba(24, 24, 27, .94); }
 .tag-filter-label { display: none; }
 #viewTodo .todo-bar, #viewTodo .todo-board { margin-left: 32px; margin-right: 32px; }
 #viewTodo .todo-board { margin-bottom: 32px; }
+
+/* ============ 批注工具条：画笔 / 荧光笔 / 橡皮 ============ */
+.annot-bar {
+  position: fixed; z-index: 85; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px; padding: 4px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .1); animation: menu-in .16s var(--ease);
+}
+.annot-bar button {
+  border: 0; background: transparent; color: var(--ink-3); border-radius: 6px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 8px; font-size: 12px;
+  transition: background-color .15s var(--ease), color .15s var(--ease);
+}
+.annot-bar button:hover { background: var(--raised); color: var(--ink); }
+.annot-bar svg { width: 16px; height: 16px; }
+.annot-bar .ab-tool.on { background: var(--raised); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+.annot-bar .ab-sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; }
+.annot-bar .ab-color { width: 28px; padding: 0; }
+.annot-bar .ab-color::before {
+  content: ""; width: 14px; height: 14px; border-radius: 50%; background: var(--c);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12);
+}
+.annot-bar .ab-color.on::before { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--c); }
+.annot-bar .ab-size { width: 28px; padding: 0; }
+.annot-bar .ab-size b { display: block; border-radius: 50%; background: var(--ink-3); }
+.annot-bar .ab-size.on { background: var(--raised); }
+.annot-bar .ab-size.on b { background: var(--ink); }
+.annot-bar .ab-icon { width: 28px; padding: 0; }
+.annot-bar .ab-done { background: var(--ink); color: #fff; padding: 0 12px; margin-left: 4px; font-weight: 500; }
+.annot-bar .ab-done:hover { background: #27272a; color: #fff; }
+.btn[data-annot-toggle].on { background: var(--ink); border-color: var(--ink); color: #fff; }

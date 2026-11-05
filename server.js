@@ -7,7 +7,7 @@ import {
   PUBLIC, MEDIA, EXPORTS, DATA, ROOT, settings, saveSettings, findBrowser,
 } from './src/config.js';
 import {
-  listArticles, getArticle, saveArticle, deleteArticle, addSseClient, emit, chatStore, watchStore, todoStore, hashId,
+  listArticles, getArticle, saveArticle, deleteArticle, addSseClient, emit, chatStore, watchStore, todoStore, hashId, annotStore,
 } from './src/store.js';
 import { buildArticle } from './src/extract.js';
 import { ingestFile } from './src/ingest.js';
@@ -55,7 +55,7 @@ app.get('/api/status', (req, res) => {
     counts: { articles: listArticles().length, watches: watchStore.list().length },
     presets: Object.entries(FORMAT_PRESETS).map(([key, v]) => ({ key, ...v })),
     ui: s.ui || {},
-    version: '1.1.0',
+    version: '1.1.1',
   });
 });
 
@@ -97,6 +97,39 @@ app.patch('/api/todos/:id', (req, res) => {
 });
 
 app.delete('/api/todos/:id', (req, res) => ok(res, { removed: todoStore.remove(req.params.id) }));
+
+/* ---------------- 批注（画笔 / 橡皮） ---------------- */
+
+const annotKey = (k) => {
+  const s = String(k || '').slice(0, 600);
+  if (!s) throw new Error('缺少批注对象');
+  return s;
+};
+
+app.get('/api/annotations', (req, res) => {
+  try {
+    ok(res, annotStore.get(annotKey(req.query.key)));
+  } catch (e) {
+    fail(res, e);
+  }
+});
+
+app.put('/api/annotations', (req, res) => {
+  try {
+    const key = annotKey(req.body?.key);
+    const raw = Array.isArray(req.body?.strokes) ? req.body.strokes : [];
+    // 只收合法笔迹：颜色 / 粗细 / 点列，坐标取整，限制数量防止文件无限膨胀
+    const strokes = raw.slice(0, 3000).map((s) => ({
+      c: /^#[0-9a-f]{6}$/i.test(s?.c) ? s.c : '#b42318',
+      s: Math.min(40, Math.max(1, Number(s?.s) || 2)),
+      h: Boolean(s?.h),
+      p: (Array.isArray(s?.p) ? s.p : []).slice(0, 4000).map((pt) => [Math.round(Number(pt?.[0]) || 0), Math.round(Number(pt?.[1]) || 0)]),
+    })).filter((s) => s.p.length);
+    ok(res, annotStore.set(key, { w: Math.round(Number(req.body?.w) || 0), strokes }));
+  } catch (e) {
+    fail(res, e);
+  }
+});
 
 /* ---------------- 自定义背景 ---------------- */
 

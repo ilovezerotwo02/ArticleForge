@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { LIBRARY_FILE, WATCH_FILE, CHAT_FILE, TODO_FILE } from './config.js';
+import { LIBRARY_FILE, WATCH_FILE, CHAT_FILE, TODO_FILE, ANNOT_FILE } from './config.js';
 
 function read(file, fallback) {
   try {
@@ -118,6 +118,21 @@ export const todoStore = {
     todos = todos.filter((x) => x.id !== id);
     write(TODO_FILE, todos);
     return todos.length < before;
+  },
+};
+
+/* ---------------- 批注（画笔笔迹） ----------------
+ * key = 文章 id 或 kb:<笔记路径>；值 = { w: 绘制时内容区宽度, strokes: [{ c 颜色, s 粗细, h 是否荧光笔, p: [[x,y],...] }] }
+ */
+
+let annots = read(ANNOT_FILE, {});
+export const annotStore = {
+  get: (key) => annots[key] || { w: 0, strokes: [] },
+  set(key, data) {
+    if (!data.strokes?.length) delete annots[key];
+    else annots[key] = data;
+    write(ANNOT_FILE, annots);
+    return annots[key] || { w: 0, strokes: [] };
   },
 };
 

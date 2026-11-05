@@ -14,6 +14,7 @@ export const LIBRARY_FILE = path.join(DATA, 'library.json');
 export const WATCH_FILE = path.join(DATA, 'watches.json');
 export const CHAT_FILE = path.join(DATA, 'chats.json');
 export const TODO_FILE = path.join(DATA, 'todos.json');
+export const ANNOT_FILE = path.join(DATA, 'annotations.json');
 
 for (const dir of [DATA, MEDIA, EXPORTS, CACHE]) {
   fs.mkdirSync(dir, { recursive: true });

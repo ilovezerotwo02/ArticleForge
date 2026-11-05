@@ -316,11 +316,6 @@
         <svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>
       </button>
     </div>
-    <div class="ai-context" id="aiContext" hidden>
-      <div class="ctx-label">已引用选区</div>
-      <div class="ctx-text" id="ctxText"></div>
-      <button class="ctx-close" id="ctxClose">×</button>
-    </div>
     <div class="chat" id="chat"></div>
     <div class="quick-asks" id="quickAsks">
       <button data-q="用三句话总结这篇文章">总结全文</button>
@@ -329,6 +324,11 @@
       <button data-q="这篇文章有哪些值得深挖的方向？给出下一步学习路径">深挖方向</button>
     </div>
     <div class="composer">
+      <!-- 选中的文字直接显示在输入框里（引用块），发送时一起带上 -->
+      <div class="ai-context" id="aiContext" hidden>
+        <div class="ctx-label"><span id="ctxLabel">引用选中内容</span><button class="ctx-close" id="ctxClose" title="移除引用">×</button></div>
+        <div class="ctx-text" id="ctxText"></div>
+      </div>
       <textarea id="composer" rows="1" placeholder="就这篇文章提问…（Enter 发送，Shift+Enter 换行）"></textarea>
       <button class="send-btn" id="sendBtn" title="发送">
         <svg viewBox="0 0 24 24"><path d="M4 12 20 4l-6 16-3-7z"/></svg>
@@ -349,6 +349,7 @@
 
 <!-- 划词浮条 -->
 <div class="sel-toolbar" id="selToolbar" hidden>
+  <button data-act="copy">复制</button>
   <button data-act="add">添加到对话</button>
   <button data-act="ask">在侧边聊天中提问</button>
 </div>

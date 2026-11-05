@@ -166,22 +166,24 @@ ${translucent ? `<style id="af-translucent">${TRANSLUCENT_CSS}</style>` : ''}
 (function () {
   var isPreview = ${isPreview ? 'true' : 'false'};
 
+  // 预览页里的外链统一交给外层打开，避免 iframe 被 X-Frame-Options 打成空白
+  // （以前这段误放在下面的代码块循环里，有 N 个代码块就会触发 N 次打开）
+  if (isPreview) {
+    document.addEventListener('click', function (e) {
+      var a = e.target.closest && e.target.closest('a[href]');
+      if (!a) return;
+      var href = a.getAttribute('href') || '';
+      if (!/^https?:/i.test(href) && href.indexOf('//') !== 0) return;
+      e.preventDefault();
+      try {
+        parent.postMessage({ source: 'af-preview', type: 'open-url', url: a.href }, '*');
+      } catch (err) {}
+    });
+  }
+
   // 代码框复制按钮
   document.querySelectorAll('pre.code-block').forEach(function (pre) {
     if (!isPreview) return;
-
-  // 预览页里的外链统一交给外层用系统浏览器打开，避免 iframe 被 X-Frame-Options 打成空白
-  document.addEventListener('click', function (e) {
-    var a = e.target.closest && e.target.closest('a[href]');
-    if (!a) return;
-    var href = a.getAttribute('href') || '';
-    if (!/^https?:/i.test(href) && href.indexOf('//') !== 0) return;
-    e.preventDefault();
-    try {
-      parent.postMessage({ source: 'af-preview', type: 'open-url', url: a.href }, '*');
-    } catch (err) {}
-  });
-
     var btn = document.createElement('button');
     btn.className = 'copy-btn';
     btn.textContent = '复制';
@@ -224,7 +226,18 @@ ${translucent ? `<style id="af-translucent">${TRANSLUCENT_CSS}</style>` : ''}
   });
 
   document.addEventListener('mousedown', function (e) {
+    // 右键不清掉选区，否则右键菜单里拿不到选中的文字
+    if (e.button === 2) return;
     if (!e.target.closest('.copy-btn')) post('clear');
+  });
+
+  // 右键：交给外层弹统一菜单（复制 / 全选 / 添加到对话 / 在侧边聊天中提问）
+  document.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    var sel = window.getSelection();
+    var text = sel ? String(sel).replace(/\\s+/g, ' ').trim() : '';
+    var a = e.target.closest && e.target.closest('a[href]');
+    post('contextmenu', { x: e.clientX, y: e.clientY, text: text.slice(0, 4000), link: a ? a.href : '' });
   });
 
   // 目录锚点平滑滚动

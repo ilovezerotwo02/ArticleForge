@@ -4,7 +4,7 @@
  * - 数据写到 %APPDATA%/ArticleForge/data，不污染安装目录
  * - 监控命中走系统通知，外链走系统浏览器，托盘常驻
  */
-const { app, BrowserWindow, Menu, Tray, shell, nativeImage, Notification, dialog, screen, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, Tray, shell, nativeImage, Notification, dialog, screen, ipcMain, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const net = require('node:net');
@@ -291,6 +291,23 @@ function openInAppWindow(url) {
 }
 
 ipcMain.on('af:open-in-app', (e, url) => openInAppWindow(url));
+
+// 右键菜单：编辑命令直接交给当前页面的 webContents（对输入框、可编辑区、编辑器都有效）
+ipcMain.on('af:edit', (e, cmd) => {
+  const wc = e.sender;
+  if (cmd === 'cut') wc.cut();
+  else if (cmd === 'copy') wc.copy();
+  else if (cmd === 'paste') wc.paste();
+  else if (cmd === 'pastePlain') wc.pasteAndMatchStyle();
+  else if (cmd === 'selectAll') wc.selectAll();
+  else if (cmd === 'undo') wc.undo();
+  else if (cmd === 'redo') wc.redo();
+});
+ipcMain.handle('af:clip-write', (e, text) => {
+  clipboard.writeText(String(text ?? ''));
+  return true;
+});
+ipcMain.handle('af:clip-read', () => clipboard.readText());
 
 function createMenu() {
   const dataDir = process.env.AF_DATA_DIR;

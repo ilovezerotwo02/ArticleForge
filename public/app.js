@@ -694,6 +694,26 @@ function showPop(anchor, items) {
   };
 }
 
+/** 在鼠标位置弹出菜单（右键菜单用） */
+function showPopAt(x, y, items) {
+  if (!items.length) return;
+  const m = $('#popMenu');
+  m.innerHTML = items
+    .map((it, i) => (it === 'hr' ? '<hr>' : it.group ? `<div class="pm-label">${esc(it.group)}</div>` : `<button data-i="${i}">${esc(it.label)}${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</button>`))
+    .join('');
+  m.hidden = false;
+  const w = m.offsetWidth;
+  const h = m.offsetHeight;
+  m.style.left = `${Math.max(4, Math.min(x, window.innerWidth - w - 4))}px`;
+  m.style.top = `${Math.max(4, y + h > window.innerHeight - 4 ? y - h : y)}px`;
+  m.onclick = (e) => {
+    const b = e.target.closest('[data-i]');
+    if (!b) return;
+    closePop();
+    items[Number(b.dataset.i)].run();
+  };
+}
+
 /** 网页原样在本软件里打开（桌面版是应用内窗口；纯浏览器模式退化成新标签） */
 function openWebInApp(url) {
   if (window.afNative?.openInApp) window.afNative.openInApp(url);
@@ -1405,7 +1425,51 @@ function renderOrganizePreview({ organized, categories, target, singleFile = tru
 
 /* ---------------- AI 对话 ---------------- */
 
+/*
+ * 对话对象：在知识库页看笔记时，AI 侧栏就对着这篇笔记聊；其它时候对着转换页打开的文章。
+ * 两边的对话记录分开保存。
+ */
+function chatTarget() {
+  if (state.view === 'knowledge' && kbBrowser.note) {
+    return { kind: 'kb', key: `kb:${kbBrowser.note.path}`, path: kbBrowser.note.path, name: kbBrowser.note.name };
+  }
+  if (state.current) return { kind: 'article', key: state.current.id, id: state.current.id, name: state.current.title };
+  return null;
+}
+
+let chatLoadedKey = '';
+
+/** 视图 / 笔记 / 文章变了就把 AI 侧栏切到对应的对话 */
+async function syncChatTarget() {
+  const t = chatTarget();
+  const key = t?.key || '';
+  if (key === chatLoadedKey) return;
+  chatLoadedKey = key;
+  clearSelection();
+  if (!t) {
+    state.chat = [];
+    renderChat();
+    return;
+  }
+  if (t.kind === 'kb') {
+    $('#aiHint').textContent = `笔记：${t.name}`;
+    try {
+      const { messages } = await api(`/api/ai/chat-kb?path=${encodeURIComponent(t.path)}`);
+      if (chatLoadedKey !== key) return;
+      state.chat = messages.map((m) => ({ role: m.role, content: m.content, selection: m.selection }));
+    } catch {
+      state.chat = [];
+    }
+    renderChat();
+  } else {
+    const a = state.current;
+    $('#aiHint').textContent = a.source === 'upload' ? '本地文档' : a.account || '已就绪';
+    await loadChat(t.id);
+  }
+}
+
 async function loadChat(articleId) {
+  chatLoadedKey = articleId;
   try {
     const { messages } = await api(`/api/ai/chat/${articleId}`);
     state.chat = messages.map((m) => ({ role: m.role, content: m.content, selection: m.selection }));
@@ -1419,20 +1483,21 @@ async function loadChat(articleId) {
 function renderChat() {
   const box = $('#chat');
   if (!state.chat.length) {
+    const t = chatTarget();
     box.innerHTML = `<div class="msg assistant">
       <div class="who">AI 阅读助手</div>
-      <div class="bubble"><p>我已经读完这篇文章。你可以：</p>
-      <ul><li>选中正文任意一句，点「在侧边聊天中提问」</li>
-      <li>直接问我文章里的命令、原理或疑点</li>
+      <div class="bubble"><p>${t ? `我已经读完${t.kind === 'kb' ? '这篇笔记' : '这篇文章'}${t.name ? `「${esc(t.name)}」` : ''}。你可以：` : '先打开一篇文章，或在知识库里选一篇笔记。然后你可以：'}</p>
+      <ul><li>选中正文任意文字，点「添加到对话」或「在侧边聊天中提问」（右键也有）</li>
+      <li>直接问我里面的命令、原理或疑点</li>
       <li>让我把知识点整理进知识库</li></ul></div></div>`;
     return;
   }
   box.innerHTML = state.chat
     .map((m) => {
       if (m.role === 'user') {
-        return `<div class="msg user"><div class="bubble">${esc(m.content)}</div>${
-          m.selection ? `<div class="cite">引用：${esc(m.selection.slice(0, 40))}…</div>` : ''
-        }</div>`;
+        return `<div class="msg user">${
+          m.selection ? `<div class="cite" title="${esc(m.selection.slice(0, 500))}">引用：${esc(m.selection.slice(0, 60))}${m.selection.length > 60 ? '…' : ''}</div>` : ''
+        }<div class="bubble">${esc(m.content)}</div></div>`;
       }
       return `<div class="msg assistant"><div class="who">AI 阅读助手</div><div class="bubble">${mdLite(m.content)}</div></div>`;
     })
@@ -1442,7 +1507,8 @@ function renderChat() {
 
 async function sendMessage(text, selection = '') {
   if (state.streaming) return;
-  if (!state.current) return toast('请先打开一篇文章', 'err');
+  const target = chatTarget();
+  if (!target) return toast('请先打开一篇文章，或在知识库里选一篇笔记', 'err');
   const q = (text || '').trim();
   if (!q && !selection) return;
 
@@ -1450,6 +1516,8 @@ async function sendMessage(text, selection = '') {
   $('#sendBtn').disabled = true;
   state.chat.push({ role: 'user', content: q || '（就这段内容提问）', selection });
   renderChat();
+  // 引用已经随这条消息发出去了，输入框里的引用块清掉
+  clearSelection();
 
   const bubble = document.createElement('div');
   bubble.className = 'msg assistant';
@@ -1464,7 +1532,7 @@ async function sendMessage(text, selection = '') {
     await sse(
       '/api/ai/chat',
       {
-        articleId: state.current.id,
+        ...(target.kind === 'kb' ? { kbPath: target.path } : { articleId: target.id }),
         messages: state.chat.slice(0, -1).map((m) => ({ role: m.role, content: m.content })),
         selection,
         question: q,
@@ -1488,7 +1556,6 @@ async function sendMessage(text, selection = '') {
       }
     );
     state.chat.push({ role: 'assistant', content: full });
-    clearSelection();
   } catch (e) {
     bubbleBody.classList.remove('caret');
     bubbleBody.innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`;
@@ -1499,68 +1566,230 @@ async function sendMessage(text, selection = '') {
   }
 }
 
-/* ---------------- 划词 ---------------- */
+/* ---------------- 划词 / 右键：复制粘贴 + 添加到对话 + 在侧边聊天中提问 ---------------- */
 
+// 刚选中、还没决定怎么用的文字（浮条和右键菜单用）
+let pendingSel = { text: '', from: '' };
+
+/** 输入框里的引用块：选中的文字显示在输入框上方，发送时一起带上 */
 function setSelection(text) {
-  state.selection = text;
-  if (text) {
-    $('#aiContext').hidden = false;
-    $('#ctxText').textContent = text;
+  state.selection = text || '';
+  const box = $('#aiContext');
+  if (state.selection) {
+    box.hidden = false;
+    $('#ctxText').textContent = state.selection;
+    const n = state.selection.length;
+    $('#ctxLabel').textContent = `引用选中内容 · ${n} 字`;
+    $('#composer').placeholder = '针对引用的内容提问…（Enter 发送）';
   } else {
-    $('#aiContext').hidden = true;
+    box.hidden = true;
+    $('#composer').placeholder = '就这篇文章提问…（Enter 发送，Shift+Enter 换行）';
   }
 }
 
 function clearSelection() {
-  state.selection = '';
-  $('#aiContext').hidden = true;
+  setSelection('');
   $('#selToolbar').hidden = true;
 }
 
 function positionToolbar(x, y) {
   const bar = $('#selToolbar');
   bar.hidden = false;
-  const w = 300;
+  const w = bar.offsetWidth || 320;
   const left = Math.min(Math.max(x, w / 2 + 8), window.innerWidth - w / 2 - 8);
-  const top = Math.max(y, 54);
+  const top = Math.max(y, 54 + bar.offsetHeight);
   bar.style.left = `${left}px`;
   bar.style.top = `${top}px`;
+}
+
+/** 确保右侧 AI 栏是展开的 */
+function ensureAiPane() {
+  if (state.panels.ai === false) togglePanel('ai');
+}
+
+async function copyText(text) {
+  if (!text) return;
+  try {
+    if (window.afNative?.clipWrite) await window.afNative.clipWrite(text);
+    else await navigator.clipboard.writeText(text);
+    toast('已复制', 'ok', 1200);
+  } catch {
+    document.execCommand('copy') ? toast('已复制', 'ok', 1200) : toast('复制失败', 'err');
+  }
+}
+
+/** 添加到对话：追加到输入框的引用块里（可以多次添加，拼在一起） */
+function addSelToChat(text) {
+  if (!text) return;
+  if (!chatTarget()) return toast('请先打开一篇文章，或在知识库里选一篇笔记', 'err');
+  ensureAiPane();
+  const cur = state.selection;
+  setSelection(cur && !cur.includes(text) ? `${cur}\n\n${text}` : cur || text);
+  $('#composer').focus();
+  toast('已添加到对话，可以继续选别的段落一起问', 'ok', 1800);
+}
+
+/** 在侧边聊天中提问：引用这段 + 预填问题并选中，直接改问题或回车即可 */
+function askSelInChat(text) {
+  if (!text) return;
+  if (!chatTarget()) return toast('请先打开一篇文章，或在知识库里选一篇笔记', 'err');
+  ensureAiPane();
+  setSelection(text);
+  const box = $('#composer');
+  box.value = '这段内容是什么意思？';
+  box.focus();
+  box.setSelectionRange(0, box.value.length);
+  autoGrow(box);
 }
 
 window.addEventListener('message', (e) => {
   const d = e.data;
   if (!d || d.source !== 'af-preview') return;
-  // 划词提问只对资料库里打开的正文生效；应用内阅读（未入库）的选区不往 AI 栏送
+  // 划词提问只对资料库里打开的正文生效；应用内阅读（未入库）的选区只给复制
   const fromPreview = e.source === $('#previewFrame').contentWindow;
-  if (d.type === 'selection' && d.text && fromPreview) {
-    const frame = $('#previewFrame').getBoundingClientRect();
-    setSelection(d.text);
+  const frameEl = fromPreview ? $('#previewFrame') : $('#readerFrame');
+  if (d.type === 'selection' && d.text) {
+    pendingSel = { text: d.text, from: fromPreview ? 'preview' : 'reader' };
+    const frame = frameEl.getBoundingClientRect();
+    $('#selToolbar').classList.toggle('copy-only', !fromPreview);
     positionToolbar(frame.left + d.rect.left + d.rect.width / 2, frame.top + d.rect.top - 8);
   } else if (d.type === 'clear') {
     $('#selToolbar').hidden = true;
   } else if (d.type === 'open-url' && d.url) {
     // 正文里的链接直接在本软件里打开，不用切去浏览器
     openWebInApp(d.url);
+  } else if (d.type === 'contextmenu') {
+    const frame = frameEl.getBoundingClientRect();
+    const text = d.text || '';
+    const items = [];
+    if (text) items.push({ label: '复制', hint: 'Ctrl+C', run: () => copyText(text) });
+    items.push({
+      label: '全选',
+      hint: 'Ctrl+A',
+      run: () => {
+        try {
+          frameEl.contentWindow.focus();
+          frameEl.contentDocument.execCommand('selectAll');
+        } catch {}
+      },
+    });
+    if (d.link) items.push({ label: '复制链接地址', run: () => copyText(d.link) }, { label: '在本软件里打开链接', run: () => openWebInApp(d.link) });
+    if (text && fromPreview) {
+      items.push('hr', { label: '添加到对话', run: () => addSelToChat(text) }, { label: '在侧边聊天中提问', run: () => askSelInChat(text) });
+    }
+    $('#selToolbar').hidden = true;
+    showPopAt(frame.left + d.x, frame.top + d.y, items);
   }
 });
 
+$('#selToolbar').addEventListener('mousedown', (e) => e.preventDefault()); // 点浮条不丢选区
 $('#selToolbar').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
   if (!btn) return;
-  const sel = state.selection;
+  const text = pendingSel.text;
   $('#selToolbar').hidden = true;
-  if (!sel) return;
-  if (btn.dataset.act === 'add') {
-    toast('已加入对话上下文', 'ok');
-    $('#composer').focus();
-    $('#composer').placeholder = '针对选中内容继续提问…';
-  } else {
-    $('#composer').value = '这段内容是什么意思？';
-    $('#composer').focus();
-    $('#composer').setSelectionRange(0, 7);
-    autoGrow($('#composer'));
-  }
+  if (!text) return;
+  if (btn.dataset.act === 'copy') copyText(text);
+  else if (btn.dataset.act === 'add') addSelToChat(text);
+  else askSelInChat(text);
 });
+
+/** 主页面（知识库阅读 / 编辑器）里的划词：在 kbReader 里选中文字就弹浮条 */
+function bindKbSelection() {
+  const reader = $('#kbReader');
+  reader.addEventListener('mouseup', (e) => {
+    if (e.button !== 0) return;
+    setTimeout(() => {
+      const sel = window.getSelection();
+      const text = sel ? String(sel).replace(/\s+/g, ' ').trim() : '';
+      if (!text || text.length < 2 || !sel.rangeCount || !reader.contains(sel.anchorNode)) {
+        $('#selToolbar').hidden = true;
+        return;
+      }
+      pendingSel = { text: text.slice(0, 4000), from: 'kb' };
+      const r = sel.getRangeAt(0).getBoundingClientRect();
+      $('#selToolbar').classList.remove('copy-only');
+      positionToolbar(r.left + r.width / 2, r.top - 8);
+    }, 10);
+  });
+  reader.addEventListener('scroll', () => ($('#selToolbar').hidden = true), true);
+  document.addEventListener('mousedown', (e) => {
+    if (!e.target.closest('#selToolbar') && e.button === 0) $('#selToolbar').hidden = true;
+  });
+}
+
+/** 全局右键菜单：输入框 / 编辑器给 剪切·复制·粘贴·全选；正文选中文字再加 添加到对话 / 在侧边聊天中提问 */
+function editableOf(el) {
+  if (!el) return null;
+  const inp = el.closest('input, textarea');
+  if (inp && !inp.readOnly && !inp.disabled && (inp.tagName === 'TEXTAREA' || /^(text|search|url|email|number|password|tel)$/i.test(inp.type || 'text'))) return inp;
+  const ce = el.closest('[contenteditable="true"], [contenteditable=""]');
+  return ce || null;
+}
+
+function selectedTextIn(el) {
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+    return el.value.slice(el.selectionStart || 0, el.selectionEnd || 0);
+  }
+  const sel = window.getSelection();
+  return sel ? String(sel) : '';
+}
+
+function runEdit(cmd, target) {
+  if (target && document.activeElement !== target) target.focus();
+  if (window.afNative?.edit) return window.afNative.edit(cmd);
+  // 浏览器模式兜底
+  if (cmd === 'paste') {
+    navigator.clipboard
+      ?.readText()
+      .then((t) => t && document.execCommand('insertText', false, t))
+      .catch(() => toast('浏览器不允许读取剪贴板，请用 Ctrl+V', 'err'));
+    return;
+  }
+  document.execCommand(cmd);
+}
+
+function bindContextMenu() {
+  document.addEventListener('contextmenu', (e) => {
+    // 弹出菜单自己 / 模态框里的普通元素不处理
+    if (e.target.closest('#popMenu')) return e.preventDefault();
+    const edit = editableOf(e.target);
+    const raw = selectedTextIn(edit);
+    const text = raw.replace(/\s+/g, ' ').trim();
+    const inArticle = Boolean(e.target.closest('#kbReader'));
+    const link = e.target.closest('a[href]')?.href || '';
+    if (!edit && !text && !link) return; // 空白处不弹菜单
+    e.preventDefault();
+    const items = [];
+    if (edit) {
+      items.push(
+        { label: '撤销', hint: 'Ctrl+Z', run: () => runEdit('undo', edit) },
+        'hr',
+        ...(raw ? [{ label: '剪切', hint: 'Ctrl+X', run: () => runEdit('cut', edit) }] : []),
+        ...(raw ? [{ label: '复制', hint: 'Ctrl+C', run: () => runEdit('copy', edit) }] : []),
+        { label: '粘贴', hint: 'Ctrl+V', run: () => runEdit('paste', edit) },
+        { label: '全选', hint: 'Ctrl+A', run: () => runEdit('selectAll', edit) }
+      );
+    } else {
+      if (text) items.push({ label: '复制', hint: 'Ctrl+C', run: () => copyText(raw) });
+      if (inArticle) items.push({ label: '全选正文', run: () => {
+        const body = $('#kbReader .kb-reader-body');
+        if (!body) return;
+        const r = document.createRange();
+        r.selectNodeContents(body);
+        const s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+      } });
+    }
+    if (link) items.push('hr', { label: '复制链接地址', run: () => copyText(link) }, { label: '在本软件里打开链接', run: () => openWebInApp(link) });
+    if (text && inArticle) {
+      items.push('hr', { label: '添加到对话', run: () => addSelToChat(text.slice(0, 4000)) }, { label: '在侧边聊天中提问', run: () => askSelInChat(text.slice(0, 4000)) });
+    }
+    $('#selToolbar').hidden = true;
+    showPopAt(e.clientX, e.clientY, items.filter((it, i, arr) => !(it === 'hr' && (i === 0 || arr[i - 1] === 'hr'))));
+  });
+}
 
 /* ---------------- 检索 ---------------- */
 
@@ -1897,6 +2126,7 @@ async function openKbNote(p) {
     const { note } = await api(`/api/kb/note?path=${encodeURIComponent(p)}`);
     kbBrowser.note = note;
     renderKbReader();
+    if (state.view === 'knowledge') syncChatTarget();
   } catch (e) {
     reader.innerHTML = `<div class="skeleton">${esc(e.message)}</div>`;
   }
@@ -3037,6 +3267,7 @@ function switchView(view) {
   if (view === 'knowledge') loadKb();
   if (view === 'settings') loadSettings();
   if (view === 'convert' && state.current) setTab(state.tab);
+  syncChatTarget();
 }
 window.switchView = switchView;
 
@@ -3349,11 +3580,16 @@ function bind() {
   $('#reloadPreview').onclick = () => setTab('preview');
   $('#organizeBtn').onclick = openOrganizeModal;
   $('#clearChat').onclick = async () => {
-    if (!state.current) return;
-    await api(`/api/ai/chat/${state.current.id}`, { method: 'DELETE' });
+    const t = chatTarget();
+    if (!t) return;
+    await api(t.kind === 'kb' ? `/api/ai/chat-kb?path=${encodeURIComponent(t.path)}` : `/api/ai/chat/${t.id}`, { method: 'DELETE' });
     state.chat = [];
     renderChat();
   };
+  // 划词浮条 + 全局右键菜单；弹出菜单按钮不抢焦点，保证剪切/粘贴作用在原来的输入框上
+  bindKbSelection();
+  bindContextMenu();
+  $('#popMenu').addEventListener('mousedown', (e) => e.preventDefault());
 
   $('#sendBtn').onclick = () => {
     const box = $('#composer');
@@ -3371,7 +3607,7 @@ function bind() {
   });
   $('#composer').addEventListener('input', (e) => autoGrow(e.target));
   $('#ctxClose').onclick = () => setSelection('');
-  $$('#quickAsks button').forEach((b) => (b.onclick = () => sendMessage(b.dataset.q)));
+  $$('#quickAsks button').forEach((b) => (b.onclick = () => sendMessage(b.dataset.q, state.selection)));
 
   $('#modalMask').onclick = (e) => {
     if (e.target.id === 'modalMask') closeModal();

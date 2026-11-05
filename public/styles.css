@@ -1113,3 +1113,22 @@ body.has-bg .kb-vditor.vditor { background: transparent; }
 .kb-vditor .vditor-ir, .kb-vditor .vditor-content { background: #fff; }
 .kb-vditor .vditor-reset pre > code { background: #f6f8fa; border-radius: 6px; }
 body.has-bg .kb-vditor .vditor-ir, body.has-bg .kb-vditor .vditor-content { background: transparent; }
+
+/* ============ v1.0.10 划词 / 右键 / 输入框引用 ============ */
+.composer { flex-wrap: wrap; }
+.composer .ai-context {
+  flex: 0 0 100%; margin: 0 0 4px; padding: 6px 8px 7px 10px; border-radius: 8px;
+  background: #f4f5ff; border: 0; border-left: 3px solid var(--brand);
+}
+.composer .ctx-label {
+  display: flex; align-items: center; justify-content: space-between;
+  letter-spacing: 0; text-transform: none; font-size: 11px; margin-bottom: 2px;
+}
+.composer .ctx-close { position: static; padding: 0 2px; font-size: 15px; cursor: pointer; }
+.composer .ctx-text {
+  max-height: 96px; overflow: auto; display: block; -webkit-line-clamp: unset;
+  white-space: pre-wrap; word-break: break-word; font-size: 12px;
+}
+.sel-toolbar button, .sel-toolbar button + button { border-radius: 6px; }
+.sel-toolbar.copy-only button:not([data-act="copy"]) { display: none; }
+.msg.user .cite { margin: 0 0 4px auto; }

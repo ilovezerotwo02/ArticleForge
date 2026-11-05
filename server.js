@@ -55,7 +55,7 @@ app.get('/api/status', (req, res) => {
     counts: { articles: listArticles().length, watches: watchStore.list().length },
     presets: Object.entries(FORMAT_PRESETS).map(([key, v]) => ({ key, ...v })),
     ui: s.ui || {},
-    version: '1.0.9',
+    version: '1.0.10',
   });
 });
 
@@ -415,9 +415,19 @@ app.get('/api/events', (req, res) => {
 /* ---------------- AI ---------------- */
 
 app.post('/api/ai/chat', async (req, res) => {
-  const { articleId, messages = [], selection = '', question = '' } = req.body || {};
-  const article = articleId ? getArticle(articleId) : null;
-  if (!article) return fail(res, new Error('请先打开一篇文章'));
+  const { articleId, kbPath = '', messages = [], selection = '', question = '' } = req.body || {};
+  let article = articleId ? getArticle(articleId) : null;
+  let chatKey = articleId || '';
+  // 知识库笔记也能当对话上下文：把 md 当成一篇「文章」
+  if (!article && kbPath) {
+    try {
+      article = kbNoteAsArticle(kbPath);
+      chatKey = kbChatKey(kbPath);
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+  if (!article) return fail(res, new Error('请先打开一篇文章或知识库笔记'));
 
   const status = aiStatus();
   if (!status.ready) return fail(res, new Error('AI 未配置：请到「设置」填写 API 地址 / 密钥 / 模型'), 400);
@@ -465,9 +475,9 @@ app.post('/api/ai/chat', async (req, res) => {
     res.end();
 
     // 记录会话，便于刷新后继续追问
-    if (articleId) {
-      const stored = chatStore.get(articleId);
-      chatStore.set(articleId, [
+    if (chatKey) {
+      const stored = chatStore.get(chatKey);
+      chatStore.set(chatKey, [
         ...stored,
         { role: 'user', content: question || '（划词提问）', selection, at: Date.now() },
         { role: 'assistant', content: full, at: Date.now() },
@@ -477,6 +487,22 @@ app.post('/api/ai/chat', async (req, res) => {
     send('error', { message: e.message });
     res.end();
   }
+});
+
+const kbChatKey = (p) => `kb-${hashId(String(p))}`;
+
+function kbNoteAsArticle(p) {
+  const note = kbReadNote(String(p));
+  const text = String(note.content || '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+  const outline = [...text.matchAll(/^(#{1,4})\s+(.+)$/gm)].map((m) => ({ level: m[1].length, text: m[2].trim() }));
+  return { title: note.name, text, outline, url: '', account: '知识库笔记', author: '', publishedAt: '' };
+}
+
+// 知识库笔记的对话记录（与文章对话分开存）
+app.get('/api/ai/chat-kb', (req, res) => ok(res, { messages: chatStore.get(kbChatKey(req.query.path || '')) }));
+app.delete('/api/ai/chat-kb', (req, res) => {
+  chatStore.clear(kbChatKey(req.query.path || ''));
+  ok(res, { messages: [] });
 });
 
 app.get('/api/ai/chat/:articleId', (req, res) => {

@@ -1773,21 +1773,54 @@ async function loadWatches() {
 
 /* ---- 应用内笔记浏览器：直接翻、直接看知识库里的 md ---- */
 
-const kbBrowser = { files: [], filter: '', current: '', expanded: new Set() };
+const kbBrowser = { files: [], filter: '', current: '', expanded: new Set(), note: null, editing: false, loaded: false };
 
-async function loadKbBrowser() {
+/** 左侧目录收起 / 展开：存到设置里，重启也记得 */
+function kbTreeOpen() {
+  return state.status?.ui?.kbTree !== false;
+}
+
+function applyKbTree() {
+  const open = kbTreeOpen();
+  $('#kbBrowserBox')?.classList.toggle('no-tree', !open);
+  $$('.kb-tree-btn').forEach((b) => {
+    b.classList.toggle('on', open);
+    b.title = open ? '收起左侧目录' : '展开左侧目录';
+  });
+}
+
+function toggleKbTree() {
+  const open = !kbTreeOpen();
+  state.status = state.status || {};
+  state.status.ui = { ...(state.status.ui || {}), kbTree: open };
+  applyKbTree();
+  api('/api/settings', { method: 'POST', body: { ui: { kbTree: open } } }).catch(() => {});
+}
+
+async function loadKbBrowser({ keep = false } = {}) {
   const list = $('#kbNoteList');
+  applyKbTree();
   try {
     const r = await api('/api/kb/files');
+    const prev = kbBrowser.current;
     kbBrowser.files = r.files || [];
-    kbBrowser.current = '';
-    // 默认展开第一层目录，深层折叠
-    kbBrowser.expanded = new Set(
-      [...new Set(kbBrowser.files.map((f) => (f.dir || '').split('/')[0]))].filter(Boolean)
-    );
+    kbBrowser.root = r.root || '';
+    // 第一次进来默认展开第一层目录；之后刷新保持用户的展开状态
+    if (!kbBrowser.loaded) {
+      kbBrowser.expanded = new Set(
+        [...new Set(kbBrowser.files.map((f) => (f.dir || '').split('/')[0]))].filter(Boolean)
+      );
+      kbBrowser.loaded = true;
+    }
     $('#kbBrowserHint').textContent = r.root
       ? `${kbBrowser.files.length} 篇 · ${r.root}`
       : '当前知识库是 API 模式（思源 / Notion），暂不支持应用内浏览';
+    const stillThere = keep && prev && kbBrowser.files.some((f) => f.path === prev);
+    if (stillThere) {
+      renderKbNoteList();
+      return;
+    }
+    kbBrowser.current = '';
     renderKbNoteList();
     $('#kbReader').innerHTML = '<div class="skeleton">从左侧选一篇笔记查看</div>';
     $('#kbToc').hidden = true;
@@ -1850,7 +1883,11 @@ function renderKbNoteList() {
     `<div class="skeleton">${kbBrowser.files.length ? '没有匹配的笔记' : '知识库里还没有 md 笔记'}</div>`;
 }
 
-async function openKbNote(p) {
+async function openKbNote(p, { force = false } = {}) {
+  if (kbBrowser.editing && !force && kbBrowser.current !== p) {
+    if (!confirm('当前笔记还在编辑，未保存的修改会丢失，继续切换？')) return;
+  }
+  kbBrowser.editing = false;
   kbBrowser.current = p;
   renderKbNoteList();
   const reader = $('#kbReader');
@@ -1859,6 +1896,63 @@ async function openKbNote(p) {
   $('.kb-browser').classList.remove('has-toc');
   try {
     const { note } = await api(`/api/kb/note?path=${encodeURIComponent(p)}`);
+    kbBrowser.note = note;
+    renderKbReader();
+  } catch (e) {
+    reader.innerHTML = `<div class="skeleton">${esc(e.message)}</div>`;
+  }
+}
+
+const KB_TREE_ICON = '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg>';
+
+/** 阅读 / 编辑两种模式；头部吸顶，往下翻也随时能点「目录」「大纲」「编辑」 */
+function renderKbReader() {
+  const note = kbBrowser.note;
+  const reader = $('#kbReader');
+  if (!note) return;
+  const editing = kbBrowser.editing;
+  const head = `
+    <div class="kb-reader-head">
+      <button class="btn sm kb-tree-btn" title="收起 / 展开左侧目录">${KB_TREE_ICON}</button>
+      <div class="kb-reader-info">
+        <div class="kb-reader-title">${esc(note.name)}${editing ? ' <span class="kb-editing">编辑中</span>' : ''}</div>
+        <div class="kb-reader-meta">${esc(note.path)} · ${note.mtime ? new Date(note.mtime).toLocaleString('zh-CN') : ''} · ${fmtSize(note.size)}</div>
+      </div>
+      <div class="kb-reader-actions">
+        ${
+          editing
+            ? `<button class="btn sm primary" id="kbSaveBtn" title="Ctrl+S">保存</button>
+               <button class="btn sm" id="kbCancelBtn">取消</button>`
+            : `<button class="btn sm kb-toc-btn" id="kbTocBtn" hidden>大纲</button>
+               <button class="btn sm" id="kbEditBtn" title="直接编辑这篇 md（保存后写回原文件）">编辑</button>
+               <button class="btn sm" id="kbOpenExternal" title="选择用哪个软件打开：默认 / Obsidian / VS Code / Typora / 记事本">打开方式 ▾</button>`
+        }
+      </div>
+    </div>`;
+
+  if (editing) {
+    reader.innerHTML = `${head}<textarea class="kb-editor" id="kbEditor" spellcheck="false"></textarea>`;
+    const ta = $('#kbEditor');
+    ta.value = note.content || '';
+    ta.focus();
+    ta.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        saveKbNote();
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end');
+      }
+    });
+    $('#kbSaveBtn').onclick = saveKbNote;
+    $('#kbCancelBtn').onclick = () => {
+      if (ta.value !== (note.content || '') && !confirm('放弃未保存的修改？')) return;
+      kbBrowser.editing = false;
+      renderKbReader();
+    };
+    $('#kbToc').hidden = true;
+    $('.kb-browser').classList.remove('has-toc');
+  } else {
     let md = note.content || '';
     // 去掉 YAML frontmatter；双链渲染成纯文本，嵌入图标注出来
     md = md.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
@@ -1866,18 +1960,11 @@ async function openKbNote(p) {
       .replace(/!\[\[([^\]]+)\]\]/g, '🖼 $1')
       .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
       .replace(/\[\[([^\]]+)\]\]/g, '$1');
-    reader.innerHTML = `
-      <div class="kb-reader-head">
-        <div style="min-width:0">
-          <div class="kb-reader-title">${esc(note.name)}</div>
-          <div class="kb-reader-meta">${esc(note.path)} · ${note.mtime ? new Date(note.mtime).toLocaleString('zh-CN') : ''} · ${fmtSize(note.size)}</div>
-        </div>
-        <div class="kb-reader-actions">
-          <button class="btn sm kb-toc-btn" id="kbTocBtn" hidden>大纲</button>
-          <button class="btn sm" id="kbOpenExternal" title="选择用哪个软件打开：默认 / Obsidian / VS Code / Typora / 记事本">打开方式 ▾</button>
-        </div>
-      </div>
-      <div class="kb-reader-body">${mdLite(md)}</div>`;
+    reader.innerHTML = `${head}<div class="kb-reader-body">${mdLite(md)}</div>`;
+    $('#kbEditBtn').onclick = () => {
+      kbBrowser.editing = true;
+      renderKbReader();
+    };
     const openBtn = $('#kbOpenExternal');
     openBtn.onclick = async () => {
       const apps = await openApps();
@@ -1897,9 +1984,107 @@ async function openKbNote(p) {
       ]);
     };
     buildKbToc(reader);
-  } catch (e) {
-    reader.innerHTML = `<div class="skeleton">${esc(e.message)}</div>`;
   }
+  reader.querySelector('.kb-reader-head .kb-tree-btn').onclick = toggleKbTree;
+  applyKbTree();
+}
+
+async function saveKbNote() {
+  const ta = $('#kbEditor');
+  const note = kbBrowser.note;
+  if (!ta || !note) return;
+  const btn = $('#kbSaveBtn');
+  if (btn) btn.disabled = true;
+  try {
+    const { note: saved } = await api('/api/kb/note', { method: 'PUT', body: { path: note.path, content: ta.value } });
+    kbBrowser.note = saved;
+    kbBrowser.editing = false;
+    const f = kbBrowser.files.find((x) => x.path === saved.path);
+    if (f) {
+      f.mtime = saved.mtime;
+      f.size = saved.size;
+    }
+    renderKbNoteList();
+    renderKbReader();
+    toast('已保存到原文件', 'ok', 1600);
+  } catch (e) {
+    toast(e.message, 'err');
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* 外部文件拖进知识库：拖到某个文件夹上 = 导入到那个文件夹；拖到别处 = 当前笔记所在目录 */
+function kbDropDirAt(target) {
+  const dirRow = target?.closest?.('#kbNoteList [data-dir]');
+  if (dirRow) return dirRow.dataset.dir;
+  const fileRow = target?.closest?.('#kbNoteList [data-path]');
+  if (fileRow) return kbBrowser.files.find((f) => f.path === fileRow.dataset.path)?.dir || '';
+  return kbBrowser.note?.dir || '';
+}
+
+async function kbImport(files, dir) {
+  files = [...(files || [])];
+  if (!files.length) return;
+  if (!kbBrowser.root) return toast('当前知识库是 API 模式（思源 / Notion），不支持拖入文件', 'err');
+  const fd = new FormData();
+  files.forEach((f) => fd.append('files', f));
+  fd.append('dir', dir || '');
+  toast(`正在导入 ${files.length} 个文件到「${dir || '根目录'}」…`, 'info');
+  try {
+    const res = await fetch('/api/kb/import', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '导入失败');
+    if (dir) {
+      // 展开目标目录（以及它的上级），让新文件马上看得到
+      const parts = dir.split('/');
+      parts.forEach((_, i) => kbBrowser.expanded.add(parts.slice(0, i + 1).join('/')));
+    }
+    await loadKbBrowser({ keep: true });
+    const firstMd = (data.saved || []).find((p) => /\.md$/i.test(p));
+    if (firstMd) openKbNote(firstMd);
+    if (data.saved?.length) toast(`已导入 ${data.saved.length} 个文件`, 'ok');
+    if (data.errors?.length) toast(data.errors.join('；'), 'err', 6000);
+  } catch (e) {
+    toast(e.message, 'err', 6000);
+  }
+}
+
+function bindKbDrop() {
+  const box = $('#kbBrowserBox');
+  const mask = $('#kbDrop');
+  let depth = 0;
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  const hide = () => {
+    depth = 0;
+    mask.hidden = true;
+    $$('#kbNoteList .drop-target').forEach((x) => x.classList.remove('drop-target'));
+  };
+  box.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth++;
+    mask.hidden = false;
+  });
+  box.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    const dir = kbDropDirAt(e.target);
+    $('#kbDropDir').textContent = dir || '知识库根目录';
+    $$('#kbNoteList .drop-target').forEach((x) => x.classList.remove('drop-target'));
+    e.target.closest?.('#kbNoteList [data-dir]')?.classList.add('drop-target');
+  });
+  box.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e)) return;
+    if (--depth <= 0) hide();
+  });
+  box.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    const dir = kbDropDirAt(e.target);
+    hide();
+    kbImport(e.dataTransfer.files, dir);
+  });
 }
 
 /** 笔记阅读器的标题目录：从渲染好的正文里提 h1-h4，右侧悬浮面板可跳转、随滚动高亮 */
@@ -1928,7 +2113,14 @@ function buildKbToc(reader) {
     toc,
     heads.map((h) => ({ id: h.id, level: Number(h.tagName[1]), text: h.textContent.trim().replace(/\s+/g, ' ') })),
     {
-      onJump: (id) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+      // 头部吸顶会挡住标题：跳转时减去头部高度
+      onJump: (id) => {
+        const h = document.getElementById(id);
+        if (!h) return;
+        const headH = reader.querySelector('.kb-reader-head')?.offsetHeight || 0;
+        const top = h.getBoundingClientRect().top - reader.getBoundingClientRect().top + reader.scrollTop - headH - 8;
+        reader.scrollTo({ top, behavior: 'smooth' });
+      },
       onClose: () => {
         setDocOutlineOpen(false);
         show(false);
@@ -1951,9 +2143,10 @@ function kbTocSpy() {
   const heads = $$('.kb-reader-body [id^="kbh-"]', reader);
   if (!heads.length) return;
   const rb = reader.getBoundingClientRect();
+  const headH = reader.querySelector('.kb-reader-head')?.offsetHeight || 0;
   let cur = heads[0].id;
   for (const h of heads) {
-    if (h.getBoundingClientRect().top - rb.top <= 72) cur = h.id;
+    if (h.getBoundingClientRect().top - rb.top <= headH + 40) cur = h.id;
     else break;
   }
   setOutlineActive(toc, cur);
@@ -2004,7 +2197,7 @@ async function loadKb() {
   } catch (e) {
     $('#vaultNotes').innerHTML = `<div class="skeleton">${esc(e.message)}</div>`;
   }
-  loadKbBrowser();
+  loadKbBrowser({ keep: true });
 }
 
 /* ---------------- 设置 ---------------- */
@@ -2398,7 +2591,7 @@ async function loadTodos() {
   }
 }
 
-/** 没拖动过的便签自动铺格子（坐标相对便签板） */
+/** 没摆放过的便签自动铺格子（坐标相对便签板） */
 function todoAutoPos(i, rect) {
   const cols = Math.max(1, Math.floor((rect.width - 16) / 232));
   const col = i % cols;
@@ -2406,21 +2599,62 @@ function todoAutoPos(i, rect) {
   return { x: 8 + col * 232, y: 8 + row * 178 };
 }
 
-/* 便签的 x/y 一直存相对便签板的坐标（兼容旧数据），渲染时换算成窗口坐标画到全窗口浮层上 */
+/*
+ * 便签坐标：vx / vy = 窗口（视口）坐标，摆在哪就一直在哪，跟哪个页面、便签板在哪都无关。
+ * 旧数据只有 x / y（相对便签板），首次渲染时换算成 vx / vy 并存回去，之后不再漂移。
+ */
 let lastBoardRect = null;
 
 function measureBoard() {
-  const r = $('#todoBoard').getBoundingClientRect();
-  if (r.width > 0) lastBoardRect = { left: r.left, top: r.top, width: r.width, height: r.height };
-  return lastBoardRect;
+  const board = $('#todoBoard');
+  const r = board && board.offsetParent ? board.getBoundingClientRect() : null;
+  if (r && r.width > 0) lastBoardRect = { left: r.left, top: r.top, width: r.width, height: r.height };
+  return r && r.width > 0 ? lastBoardRect : null;
 }
 
-/** 夹到窗口可见范围（视口坐标）：拖到哪儿都行，但至少留 48px 露边，别把便签彻底拖丢 */
-function clampNotePos(p, noteW) {
+const TITLEBAR_H = () => $('#titlebar')?.getBoundingClientRect().height || 0;
+
+/** 整张便签都留在窗口里：左右、下边都不出界，上边不压住标题栏 */
+function clampNotePos(p, w = 216, h = 120) {
+  const maxX = Math.max(0, window.innerWidth - w - 4);
+  const maxY = Math.max(TITLEBAR_H(), window.innerHeight - h - 4);
   return {
-    x: Math.min(Math.max(p.x, 48 - noteW), window.innerWidth - 48),
-    y: Math.min(Math.max(p.y, 2), window.innerHeight - 42),
+    x: Math.min(Math.max(p.x, 4), maxX),
+    y: Math.min(Math.max(p.y, TITLEBAR_H() + 2), maxY),
   };
+}
+
+const hasNum = (v) => typeof v === 'number' && Number.isFinite(v);
+
+/** 便签显示 / 隐藏：隐藏后只在「待办」页显示（在那里统一整理），状态存到设置里，重启也记得 */
+function notesHidden() {
+  return Boolean(state.status?.ui?.notesHidden);
+}
+
+function applyNotesVisibility() {
+  const layer = $('#noteFloat');
+  const has = (state.todos || []).length > 0;
+  const hide = notesHidden() && state.view !== 'todo';
+  layer.hidden = !has || hide;
+  const btn = $('#tbNotesToggle');
+  if (btn) {
+    btn.classList.toggle('off', notesHidden());
+    btn.title = notesHidden() ? '显示便签（当前已隐藏，仅待办页可见）' : '隐藏便签（待办页仍可见）';
+  }
+  const t = $('#toggleNotesBtn');
+  if (t) t.textContent = notesHidden() ? '显示便签' : '隐藏便签';
+}
+
+async function setNotesHidden(v) {
+  state.status = state.status || {};
+  state.status.ui = { ...(state.status.ui || {}), notesHidden: Boolean(v) };
+  applyNotesVisibility();
+  toast(v ? '便签已隐藏（待办页仍可查看）' : '便签已显示', 'ok', 1500);
+  try {
+    await api('/api/settings', { method: 'POST', body: { ui: { notesHidden: Boolean(v) } } });
+  } catch (e) {
+    toast(e.message, 'err');
+  }
 }
 
 function renderTodos() {
@@ -2434,27 +2668,38 @@ function renderTodos() {
   $('#clearDoneTodo').style.display = todos.some((t) => t.done) ? '' : 'none';
 
   if (!todos.length) {
-    layer.hidden = true;
     layer.innerHTML = '';
+    applyNotesVisibility();
     board.innerHTML = '<div class="skeleton">还没有便签，在上面输入第一件没完成的事吧</div>';
     return;
   }
-  layer.hidden = false;
   board.innerHTML =
-    '<div class="board-hint">便签不关在这里 —— 可以拖到窗口任意位置，切到别的页面它们也一直留着；<br>回到这页就能统一整理，📌 固定后不怕误拖</div>';
-  const rect = measureBoard() || lastBoardRect || { left: 90, top: 150, width: 860, height: 520 };
+    '<div class="board-hint">便签不关在这里 —— 可以拖到窗口任意位置，切到别的页面它们也一直留着；<br>固定后位置不会再变，右上角的眼睛按钮可以隐藏 / 显示便签</div>';
+  const measured = measureBoard();
+  const rect = measured || lastBoardRect || { left: 90, top: 150, width: 860, height: 520 };
   // 布局顺序：固定在前，未完成在中（新的在前），已完成垫底
   const ordered = [...todos].sort(
     (a, b) => (b.pinned - a.pinned) || (a.done - b.done) || String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
   );
+  const toSave = [];
   let autoI = 0;
   layer.innerHTML = ordered
     .map((t) => {
-      const hasPos = typeof t.x === 'number' && t.x !== null && typeof t.y === 'number' && t.y !== null;
-      const pos = hasPos ? { x: t.x, y: t.y } : todoAutoPos(autoI++, rect);
-      // 存的是板相对坐标：先加上板在窗口里的偏移，再夹进可视范围（此前漏加偏移，便签会飞出窗口外）
-      const vp = clampNotePos({ x: rect.left + pos.x, y: rect.top + pos.y }, 216);
-      return `<div class="todo-note c-${esc(t.color || 'amber')} ${t.done ? 'done' : ''} ${t.pinned ? 'pinned' : ''}" data-id="${t.id}" style="left:${Math.round(vp.x)}px;top:${Math.round(vp.y)}px">
+      let vp;
+      if (hasNum(t.vx) && hasNum(t.vy)) {
+        vp = { x: t.vx, y: t.vy };
+      } else {
+        const pos = hasNum(t.x) && hasNum(t.y) ? { x: t.x, y: t.y } : todoAutoPos(autoI++, rect);
+        vp = { x: rect.left + pos.x, y: rect.top + pos.y };
+        // 只有量到了真实便签板（或便签已固定）才把位置定下来，避免拿估算值存死
+        if (measured || t.pinned) {
+          t.vx = Math.round(vp.x);
+          t.vy = Math.round(vp.y);
+          toSave.push(t);
+        }
+      }
+      const c = clampNotePos(vp);
+      return `<div class="todo-note c-${esc(t.color || 'amber')} ${t.done ? 'done' : ''} ${t.pinned ? 'pinned' : ''}" data-id="${t.id}" data-vx="${Math.round(vp.x)}" data-vy="${Math.round(vp.y)}" style="left:${Math.round(c.x)}px;top:${Math.round(c.y)}px">
         <div class="todo-head">
           <button class="t-pin" title="${t.pinned ? '取消固定（恢复可拖动）' : '固定位置，防止误拖'}">${t.pinned ? '📌' : '📍'}</button>
           <span class="t-date">${t.createdAt ? new Date(t.createdAt).toLocaleDateString('zh-CN') : ''}</span>
@@ -2462,30 +2707,34 @@ function renderTodos() {
         </div>
         <div class="t-text" title="双击编辑内容">${esc(t.text)}</div>
         <div class="todo-foot">
-          ${t.done ? '<button class="t-reopen" title=' + '"还没做完，恢复到待办">' + '↩ 没做完</button>' : '<button class="t-done" title="这件事做完了">✓ 完成</button>'}
+          ${t.done ? '<button class="t-reopen" title="还没做完，恢复到待办">↩ 没做完</button>' : '<button class="t-done" title="这件事做完了">✓ 完成</button>'}
         </div>
       </div>`;
     })
     .join('');
+  applyNotesVisibility();
+  // 按便签真实宽高再夹一次，保证整张都在窗口里（只影响显示，不改存储，窗口拉大后回到原位）
   layer.querySelectorAll('.todo-note').forEach((el) => {
+    const c = clampNotePos({ x: Number(el.dataset.vx), y: Number(el.dataset.vy) }, el.offsetWidth || 216, el.offsetHeight || 120);
+    el.style.left = `${Math.round(c.x)}px`;
+    el.style.top = `${Math.round(c.y)}px`;
     bindTodoDrag(el, todos.find((x) => x.id === el.dataset.id));
   });
+  for (const t of toSave) api(`/api/todos/${t.id}`, { method: 'PATCH', body: { vx: t.vx, vy: t.vy } }).catch(() => {});
 }
 
 function bindTodoDrag(el, t) {
   if (!t) return;
   el.addEventListener('mousedown', (e) => {
-    if (t.pinned || e.target.closest('button') || e.target.isContentEditable) return;
+    if (t.pinned || e.button !== 0 || e.target.closest('button') || e.target.isContentEditable) return;
     e.preventDefault();
-    const rect = measureBoard() || lastBoardRect || { left: 0, top: 0 };
     const noteRect = el.getBoundingClientRect();
     const ox = e.clientX - noteRect.left;
     const oy = e.clientY - noteRect.top;
     el.classList.add('dragging');
     el.style.zIndex = 60;
     const move = (ev) => {
-      // 想拖到哪就拖到哪：整个窗口都行，不再圈在待办板里（浮层坐标 = 视口坐标）
-      const p = clampNotePos({ x: ev.clientX - ox, y: ev.clientY - oy }, noteRect.width);
+      const p = clampNotePos({ x: ev.clientX - ox, y: ev.clientY - oy }, noteRect.width, noteRect.height);
       el.style.left = `${Math.round(p.x)}px`;
       el.style.top = `${Math.round(p.y)}px`;
     };
@@ -2494,11 +2743,12 @@ function bindTodoDrag(el, t) {
       document.removeEventListener('mouseup', up);
       el.classList.remove('dragging');
       el.style.zIndex = '';
-      // 存储保持板相对坐标（兼容旧数据）：视口坐标减去板的偏移
-      t.x = Math.round((parseFloat(el.style.left) || 0) - rect.left);
-      t.y = Math.round((parseFloat(el.style.top) || 0) - rect.top);
+      t.vx = Math.round(parseFloat(el.style.left) || 0);
+      t.vy = Math.round(parseFloat(el.style.top) || 0);
+      el.dataset.vx = t.vx;
+      el.dataset.vy = t.vy;
       try {
-        await api(`/api/todos/${t.id}`, { method: 'PATCH', body: { x: t.x, y: t.y } });
+        await api(`/api/todos/${t.id}`, { method: 'PATCH', body: { vx: t.vx, vy: t.vy } });
       } catch {}
     };
     document.addEventListener('mousemove', move);
@@ -2627,6 +2877,7 @@ function switchView(view) {
   $(map[view]).hidden = false;
   $('#viewTabs').hidden = !(view === 'convert' && state.current);
   applyGrid();
+  applyNotesVisibility();
 
   // 顶部标题栏跟随视图
   const titles = { search: '全网检索', todo: '待办便签', watch: '内容监控', knowledge: '知识库', settings: '设置' };
@@ -2786,8 +3037,14 @@ function bind() {
     if (!t) return;
     if (e.target.closest('.t-pin')) {
       t.pinned = !t.pinned;
+      // 固定时把当前看到的位置一起存下：之后无论切到哪个页面、重启软件都在这里
+      const body = { pinned: t.pinned };
+      if (t.pinned) {
+        t.vx = body.vx = Math.round(parseFloat(note.style.left) || 0);
+        t.vy = body.vy = Math.round(parseFloat(note.style.top) || 0);
+      }
       try {
-        await api(`/api/todos/${t.id}`, { method: 'PATCH', body: { pinned: t.pinned } });
+        await api(`/api/todos/${t.id}`, { method: 'PATCH', body });
         renderTodos();
       } catch (err) {
         toast(err.message, 'err');
@@ -2839,6 +3096,8 @@ function bind() {
   };
   $('#tbAiToggle').onclick = () => togglePanel('ai');
   $('#tbTodo').onclick = () => switchView('todo');
+  $('#tbNotesToggle').onclick = () => setNotesHidden(!notesHidden());
+  $('#toggleNotesBtn').onclick = () => setNotesHidden(!notesHidden());
   if (window.afNative) {
     document.body.classList.add('desktop');
     $('#tbMenu').onclick = (e) => {
@@ -2908,7 +3167,17 @@ function bind() {
     doFetch(title);
   };
 
-  $('#kbRefreshBtn').onclick = loadKbBrowser;
+  $('#kbRefreshBtn').onclick = () => loadKbBrowser({ keep: true });
+  $('#kbTreeBtn').onclick = toggleKbTree;
+  $('#kbImportBtn').onclick = () => $('#kbImportInput').click();
+  $('#kbImportInput').onchange = (e) => {
+    kbImport(e.target.files, kbBrowser.note?.dir || '');
+    e.target.value = '';
+  };
+  bindKbDrop();
+  // 文件拖到别处时别让窗口直接跳去打开它
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', (e) => e.preventDefault());
   $('#kbNoteFilter').oninput = (e) => {
     kbBrowser.filter = e.target.value;
     renderKbNoteList();
@@ -2977,7 +3246,7 @@ function bind() {
     if (state.view === 'convert') loadLibrary();
   });
   es.addEventListener('todos:update', () => {
-    if (state.view === 'todo') loadTodos();
+    loadTodos();
   });
 }
 
@@ -3008,6 +3277,8 @@ async function init() {
   } catch (e) {
     toast(e.message, 'err');
   }
+  // 便签是全窗口浮层：启动就加载，重启后不用先点「待办」也能看到
+  loadTodos();
   await loadLibrary();
   autoGrow($('#composer'));
 }

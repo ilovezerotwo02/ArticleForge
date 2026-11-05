@@ -27,6 +27,10 @@
       <svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
       <span>待办</span><i class="rail-count" id="todoRailCount" hidden></i>
     </button>
+    <button class="tb-btn" id="tbNotesToggle" title="隐藏 / 显示便签">
+      <svg class="eye-on" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+      <svg class="eye-off" viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.6 10.6 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3 3.9"/><path d="M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+    </button>
     <button class="tb-btn" id="tbAiToggle" title="收起 / 展开右侧 AI 栏">
       <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M14.5 4.5v15"/></svg>
     </button>
@@ -257,29 +261,29 @@
       <div class="todo-bar">
         <input id="todoInput" type="text" placeholder="记一件没完成的事…（回车添加）" maxlength="200">
         <button class="btn primary" id="addTodoBtn">添加便签</button>
+        <button class="btn ghost" id="toggleNotesBtn" title="隐藏后便签只在待办页显示，其它页面不再漂浮">隐藏便签</button>
         <button class="btn ghost" id="clearDoneTodo" title="删除所有已打勾的便签">清空已完成</button>
       </div>
       <div class="todo-board" id="todoBoard"><div class="skeleton" id="todoEmpty">还没有便签，在上面输入第一件没完成的事吧</div></div>
     </section>
 
     <section class="view" id="viewKnowledge" hidden>
-      <div class="page-head">
-        <h1>知识库</h1>
-        <p>支持 Obsidian / Logseq / 思源 / Notion / 任意 Markdown 目录；概念笔记自动建链，避免重复。</p>
-      </div>
-      <div class="card" style="margin-bottom:16px">
-        <div class="card-head">
-          <h3>笔记浏览器 <span class="hint" style="margin:0">在应用里直接翻、直接看 md，不用再开一个软件</span></h3>
-          <button class="link-btn" id="kbRefreshBtn">刷新</button>
-        </div>
+      <div class="card kb-card">
         <div class="kb-toolbar">
+          <button class="btn sm kb-tree-btn on" id="kbTreeBtn" title="收起 / 展开左侧目录">
+            <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg> 目录
+          </button>
           <input id="kbNoteFilter" type="text" placeholder="筛选笔记名 / 目录…">
           <span class="hint" id="kbBrowserHint" style="margin:0"></span>
+          <button class="btn sm" id="kbImportBtn" title="选择文件导入到当前目录（也可以直接把文件拖进来）">导入文件</button>
+          <input type="file" id="kbImportInput" multiple hidden>
+          <button class="link-btn" id="kbRefreshBtn">刷新</button>
         </div>
-        <div class="kb-browser">
+        <div class="kb-browser" id="kbBrowserBox">
           <div class="kb-note-list" id="kbNoteList"><div class="skeleton">加载中…</div></div>
           <div class="kb-reader" id="kbReader"><div class="skeleton">从左侧选一篇笔记查看</div></div>
           <div class="kb-toc" id="kbToc" hidden></div>
+          <div class="kb-drop" id="kbDrop" hidden><div>松开鼠标，导入到 <b id="kbDropDir">知识库根目录</b></div></div>
         </div>
       </div>
       <div class="knowledge-grid">

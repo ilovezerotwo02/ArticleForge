@@ -15,5 +15,5 @@ echo [3/3] Build portable exe...
 call npm run build || (echo FAILED at build & pause & exit /b 1)
 
 echo.
-echo OK! Output: release\ArticleForge-1.0.7-portable.exe
+echo OK! Output: release\ArticleForge-1.0.8-portable.exe
 pause

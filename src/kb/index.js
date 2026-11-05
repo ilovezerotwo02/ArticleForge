@@ -298,3 +298,68 @@ export function kbOpenNote(rel, app = 'default') {
   const { abs } = kbResolve(rel);
   return openFileWith(abs, app);
 }
+
+/** 保存（覆盖）一篇已有笔记：应用内编辑用 */
+export function kbSaveNote(rel, content) {
+  const { abs } = kbResolve(rel);
+  const text = String(content ?? '');
+  if (text.length > 8 * 1024 * 1024) throw new Error('笔记太大（超过 8MB）');
+  fs.writeFileSync(abs, text, 'utf8');
+  return kbReadNote(rel);
+}
+
+/** 把相对目录解析成库内绝对目录（不存在就建），挡住越权 */
+function kbResolveDir(relDir) {
+  const root = kbRootDir();
+  if (!root) throw new Error('当前知识库是 API 模式（思源 / Notion），不支持拖入文件');
+  const clean = String(relDir || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (clean.includes('..') || /^[a-zA-Z]:/.test(clean)) throw new Error('非法的目录');
+  const abs = clean ? path.resolve(root, clean) : root;
+  if (abs !== root && !abs.startsWith(root + path.sep)) throw new Error('目录越界');
+  fs.mkdirSync(abs, { recursive: true });
+  return { root, abs, rel: clean };
+}
+
+/** 同名不覆盖：自动加 (2) (3)… */
+function uniquePath(dir, base, ext) {
+  let p = path.join(dir, `${base}${ext}`);
+  for (let i = 2; fs.existsSync(p); i++) p = path.join(dir, `${base} (${i})${ext}`);
+  return p;
+}
+
+const safeBase = (s) => String(s || '').replace(/[\\/:*?"<>|\r\n\t]/g, '_').replace(/^\.+/, '').trim().slice(0, 120) || '导入笔记';
+
+/**
+ * 外部文件拖进知识库：
+ * - md / markdown / txt：原样复制成 .md
+ * - pdf / docx / html：用 convert(buffer, filename) 转成 Markdown 再写入
+ * - 其它（图片、附件）：原样复制，Obsidian 里可以直接 ![[ ]] 引用
+ */
+export async function kbImportFiles(relDir, files, convert) {
+  const { root, abs } = kbResolveDir(relDir);
+  const saved = [];
+  const errors = [];
+  for (const f of files) {
+    const name = f.filename || 'file';
+    const ext = path.extname(name).toLowerCase();
+    const base = safeBase(path.basename(name, path.extname(name)));
+    try {
+      let target;
+      if (['.md', '.markdown', '.txt'].includes(ext)) {
+        target = uniquePath(abs, base, '.md');
+        fs.writeFileSync(target, f.buffer);
+      } else if (['.pdf', '.docx', '.html', '.htm'].includes(ext) && convert) {
+        const md = await convert(f.buffer, name);
+        target = uniquePath(abs, base, '.md');
+        fs.writeFileSync(target, md, 'utf8');
+      } else {
+        target = uniquePath(abs, base, ext);
+        fs.writeFileSync(target, f.buffer);
+      }
+      saved.push(path.relative(root, target).split(path.sep).join('/'));
+    } catch (e) {
+      errors.push(`${name}: ${e.message}`);
+    }
+  }
+  return { saved, errors };
+}

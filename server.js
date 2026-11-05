@@ -21,7 +21,7 @@ import {
 import {
   kbStatus, kbTest, kbWrite, kbList, listHistory, destinations, getAdapter, currentKey,
   listCategories, previewTarget, kbTree, treeText, dirMeta, nodeByPath,
-  kbFiles, kbReadNote, kbOpenNote,
+  kbFiles, kbReadNote, kbOpenNote, kbSaveNote, kbImportFiles,
 } from './src/kb/index.js';
 import { closeBrowser } from './src/fetchPage.js';
 import { listOpenApps, openUrlWith } from './src/openwith.js';
@@ -53,7 +53,7 @@ app.get('/api/status', (req, res) => {
     counts: { articles: listArticles().length, watches: watchStore.list().length },
     presets: Object.entries(FORMAT_PRESETS).map(([key, v]) => ({ key, ...v })),
     ui: s.ui || {},
-    version: '1.0.6',
+    version: '1.0.8',
   });
 });
 
@@ -83,12 +83,12 @@ app.post('/api/todos', (req, res) => {
 
 app.patch('/api/todos/:id', (req, res) => {
   const patch = {};
-  for (const k of ['text', 'done', 'pinned', 'color', 'x', 'y']) {
+  for (const k of ['text', 'done', 'pinned', 'color', 'x', 'y', 'vx', 'vy']) {
     if (req.body?.[k] !== undefined) patch[k] = req.body[k];
   }
   if (patch.text !== undefined) patch.text = String(patch.text).trim().slice(0, 200) || '（空便签）';
   if (patch.color !== undefined && !TODO_COLORS.includes(patch.color)) delete patch.color;
-  for (const k of ['x', 'y']) if (patch[k] !== null) patch[k] = Number(patch[k]) || 0;
+  for (const k of ['x', 'y', 'vx', 'vy']) if (k in patch && patch[k] !== null) patch[k] = Number(patch[k]) || 0;
   const t = todoStore.update(req.params.id, patch);
   if (!t) return fail(res, new Error('便签不存在'), 404);
   ok(res, { todo: t });
@@ -739,6 +739,32 @@ app.get('/api/kb/note', (req, res) => {
 app.post('/api/kb/note/open', (req, res) => {
   try {
     ok(res, kbOpenNote(String(req.body?.path || ''), String(req.body?.app || 'default')));
+  } catch (e) {
+    fail(res, e, 400);
+  }
+});
+
+// 应用内编辑：覆盖保存一篇已有笔记
+app.put('/api/kb/note', (req, res) => {
+  try {
+    ok(res, { note: kbSaveNote(String(req.body?.path || ''), req.body?.content) });
+  } catch (e) {
+    fail(res, e, 400);
+  }
+});
+
+// 外部文件拖进知识库：md/txt 原样复制，pdf/docx/html 转成 md，其它文件当附件复制
+const kbUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024, files: 30 } });
+app.post('/api/kb/import', kbUpload.array('files', 30), async (req, res) => {
+  try {
+    const files = (req.files || []).map((f) => ({
+      buffer: f.buffer,
+      mimetype: f.mimetype,
+      filename: Buffer.from(f.originalname, 'latin1').toString('utf8'),
+    }));
+    if (!files.length) throw new Error('没有收到文件');
+    const convert = async (buffer, filename) => (await ingestFile({ buffer, filename, mimetype: '' })).markdown;
+    ok(res, await kbImportFiles(String(req.body?.dir || ''), files, convert));
   } catch (e) {
     fail(res, e, 400);
   }

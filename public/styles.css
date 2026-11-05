@@ -1020,3 +1020,68 @@ body.has-bg .doc-outline { background: rgba(255, 255, 255, calc(var(--panel-a, 0
 body.has-bg .rel-bar input, body.has-bg .rel-bar select { background: rgba(255, 255, 255, 0.92); }
 body.has-bg .rel-bar { background: transparent; }
 @media (max-width: 1180px) { .doc-outline { flex-basis: 220px; width: 220px; } }
+
+/* ============ v1.0.8 知识库：铺满一屏 / 目录可收起 / 头部吸顶 / 编辑 / 拖入 ============ */
+.kb-card {
+  margin: 14px 18px 0; padding: 12px 14px 14px;
+  height: calc(100% - 14px); min-height: 420px; display: flex; flex-direction: column;
+}
+.kb-card .kb-toolbar { margin: 0 0 10px; flex: 0 0 auto; }
+.kb-card .kb-toolbar .hint { max-width: 32%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kb-card .kb-browser { flex: 1; min-height: 0; }
+.kb-card .kb-note-list, .kb-card .kb-reader, .kb-card .kb-toc { max-height: none; height: 100%; min-height: 0; }
+.kb-tree-btn { display: inline-flex; align-items: center; gap: 4px; }
+.kb-tree-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.kb-tree-btn.on { color: var(--brand); border-color: #c9cdf7; }
+.kb-reader-head .kb-tree-btn { flex: 0 0 auto; padding: 0 7px; }
+.kb-browser.no-tree { grid-template-columns: minmax(0, 1fr); }
+.kb-browser.no-tree.has-toc { grid-template-columns: minmax(0, 1fr) 250px; }
+.kb-browser.no-tree .kb-note-list { display: none; }
+
+/* 阅读器头部吸顶：往下翻也能随时点 目录 / 大纲 / 编辑 */
+.kb-reader { padding-top: 0; display: flex; flex-direction: column; }
+.kb-reader-head {
+  position: sticky; top: 0; z-index: 3; align-items: center;
+  margin: 0 -22px 14px; padding: 12px 22px 10px; background: #fff;
+}
+body.has-bg .kb-reader-head { background: rgba(255, 255, 255, 0.94); backdrop-filter: blur(4px); }
+.kb-reader > .skeleton { margin-top: 18px; }
+.kb-editing {
+  font-size: 11px; font-weight: 600; color: #b26a00; background: #fff4dc;
+  border-radius: 10px; padding: 1px 8px; vertical-align: 2px; margin-left: 6px;
+}
+.kb-editor {
+  flex: 1; min-height: 300px; width: 100%; resize: none; border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; margin-bottom: 18px; outline: none; background: #fbfbfd; color: var(--ink);
+  font: 13px/1.7 "Cascadia Code", Consolas, "Microsoft YaHei UI", monospace; tab-size: 2;
+}
+.kb-editor:focus { border-color: #c9cdf7; background: #fff; }
+
+/* 拖文件进来时的提示遮罩（不拦鼠标，方便判断落在哪个文件夹） */
+.kb-drop {
+  position: absolute; inset: 0; z-index: 8; pointer-events: none; border-radius: 10px;
+  border: 2px dashed var(--brand); background: rgba(99, 102, 241, 0.08);
+  display: grid; place-items: end center; padding-bottom: 28px;
+}
+.kb-drop > div {
+  background: #fff; border-radius: 20px; padding: 7px 16px; font-size: 13px; color: var(--ink-2);
+  box-shadow: 0 6px 18px rgba(20, 24, 58, 0.15);
+}
+.kb-drop b { color: var(--brand); }
+.kb-row.drop-target { background: var(--brand-soft); outline: 2px solid var(--brand); outline-offset: -2px; }
+
+/* 顶栏便签显示 / 隐藏 */
+#tbNotesToggle .eye-off { display: none; }
+#tbNotesToggle.off .eye-on { display: none; }
+#tbNotesToggle.off .eye-off { display: inline; }
+#tbNotesToggle:not(.off) { color: var(--brand); }
+.kb-reader > .kb-reader-head, .kb-reader > .kb-reader-body { flex-shrink: 0; }
+@media (max-width: 1100px) {
+  .kb-card { height: auto; }
+  .kb-card .kb-note-list { height: 260px; }
+  .kb-card .kb-reader { height: 70vh; }
+}
+.kb-reader-head { flex-wrap: wrap; row-gap: 8px; }
+.kb-reader-info { flex: 1 1 200px; min-width: 0; }
+.kb-reader-info .kb-reader-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
+.kb-reader-actions { flex-wrap: wrap; margin-left: auto; }

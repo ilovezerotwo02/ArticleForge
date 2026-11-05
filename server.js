@@ -21,7 +21,7 @@ import {
 import {
   kbStatus, kbTest, kbWrite, kbList, listHistory, destinations, getAdapter, currentKey,
   listCategories, previewTarget, kbTree, treeText, dirMeta, nodeByPath,
-  kbFiles, kbReadNote, kbOpenNote, kbSaveNote, kbImportFiles,
+  kbFiles, kbReadNote, kbOpenNote, kbSaveNote, kbImportFiles, kbRootDir,
 } from './src/kb/index.js';
 import { closeBrowser } from './src/fetchPage.js';
 import { listOpenApps, openUrlWith } from './src/openwith.js';
@@ -35,9 +35,11 @@ app.use(express.static(PUBLIC));
 app.use('/media', express.static(MEDIA, { maxAge: '7d' }));
 app.use('/vendor/marked', express.static(path.join(PUBLIC, 'vendor/marked')));
 app.use('/vendor/katex', express.static(path.join(PUBLIC, 'vendor/katex')));
+app.use('/vendor/vditor', express.static(path.join(PUBLIC, 'vendor/vditor'), { maxAge: '7d' }));
 app.use('/exports', express.static(EXPORTS, { maxAge: '1h' }));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024, files: 10 } });
+const kbUploadAsset = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 10 } });
 
 const ok = (res, data) => res.json({ ok: true, ...data });
 const fail = (res, e, code = 400) => res.status(code).json({ ok: false, error: e?.message || String(e) });
@@ -53,7 +55,7 @@ app.get('/api/status', (req, res) => {
     counts: { articles: listArticles().length, watches: watchStore.list().length },
     presets: Object.entries(FORMAT_PRESETS).map(([key, v]) => ({ key, ...v })),
     ui: s.ui || {},
-    version: '1.0.8',
+    version: '1.0.9',
   });
 });
 
@@ -739,6 +741,34 @@ app.get('/api/kb/note', (req, res) => {
 app.post('/api/kb/note/open', (req, res) => {
   try {
     ok(res, kbOpenNote(String(req.body?.path || ''), String(req.body?.app || 'default')));
+  } catch (e) {
+    fail(res, e, 400);
+  }
+});
+
+// 知识库里的附件（图片等）：编辑器按笔记所在目录解析相对路径，只读、限定在库根目录内
+app.get(/^\/kbfile\/(.+)$/, (req, res) => {
+  try {
+    const root = kbRootDir();
+    if (!root) return res.status(404).end();
+    const rel = decodeURIComponent(req.params[0] || '').replace(/\\/g, '/');
+    if (rel.split('/').includes('..')) return res.status(400).end();
+    const abs = path.resolve(root, rel);
+    if (!abs.startsWith(root + path.sep) || !fs.existsSync(abs) || !fs.statSync(abs).isFile()) return res.status(404).end();
+    res.sendFile(abs, { dotfiles: 'allow' });
+  } catch {
+    res.status(404).end();
+  }
+});
+
+// 编辑器里粘贴 / 拖入图片：存到笔记所在目录，返回相对文件名
+app.post('/api/kb/asset', kbUploadAsset.array('file[]', 10), (req, res) => {
+  try {
+    const files = (req.files || []).map((f) => ({ buffer: f.buffer, filename: Buffer.from(f.originalname, 'latin1').toString('utf8') }));
+    if (!files.length) throw new Error('没有收到文件');
+    kbImportFiles(String(req.body?.dir || ''), files, null)
+      .then((r) => ok(res, r))
+      .catch((e) => fail(res, e, 400));
   } catch (e) {
     fail(res, e, 400);
   }

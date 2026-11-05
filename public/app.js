@@ -1883,11 +1883,10 @@ function renderKbNoteList() {
     `<div class="skeleton">${kbBrowser.files.length ? '没有匹配的笔记' : '知识库里还没有 md 笔记'}</div>`;
 }
 
-async function openKbNote(p, { force = false } = {}) {
-  if (kbBrowser.editing && !force && kbBrowser.current !== p) {
-    if (!confirm('当前笔记还在编辑，未保存的修改会丢失，继续切换？')) return;
-  }
-  kbBrowser.editing = false;
+async function openKbNote(p) {
+  // 正在编辑：先把改动存掉再切（和 Obsidian 一样自动保存，不弹窗）
+  if (kbBrowser.editing && kbBrowser.current !== p) await kbFlushSave();
+  kbExitEditor();
   kbBrowser.current = p;
   renderKbNoteList();
   const reader = $('#kbReader');
@@ -1905,53 +1904,197 @@ async function openKbNote(p, { force = false } = {}) {
 
 const KB_TREE_ICON = '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg>';
 
+/* ---------- Obsidian 式编辑：Vditor 即时渲染（边写边渲染），自动保存 ---------- */
+
+const kbEd = { vd: null, dirty: false, timer: 0, saving: null, path: '' };
+let vditorLoading = null;
+
+function loadVditor() {
+  if (window.Vditor) return Promise.resolve();
+  if (vditorLoading) return vditorLoading;
+  vditorLoading = new Promise((resolve, reject) => {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = '/vendor/vditor/dist/index.css';
+    document.head.appendChild(css);
+    const s = document.createElement('script');
+    s.src = '/vendor/vditor/dist/index.min.js';
+    s.onload = () => resolve();
+    s.onerror = () => {
+      vditorLoading = null;
+      reject(new Error('编辑器加载失败'));
+    };
+    document.head.appendChild(s);
+  });
+  return vditorLoading;
+}
+
+function kbSetSaveState(text, cls = '') {
+  const el = $('#kbSaveState');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `kb-save-state ${cls}`;
+}
+
+/** 立即保存（自动保存 / Ctrl+S / 切换笔记 / 离开页面都走这里） */
+async function kbFlushSave() {
+  clearTimeout(kbEd.timer);
+  // 先同步取出内容：之后编辑器就算被销毁（切页面 / 切笔记）也不会丢改动
+  if (!kbEd.vd || !kbEd.dirty) {
+    if (kbEd.saving) await kbEd.saving;
+    return;
+  }
+  const path = kbEd.path;
+  const content = kbEd.vd.getValue();
+  kbEd.dirty = false;
+  if (kbBrowser.note?.path === path) kbBrowser.note = { ...kbBrowser.note, content };
+  if (kbEd.saving) await kbEd.saving.catch(() => {});
+  kbSetSaveState('保存中…');
+  kbEd.saving = api('/api/kb/note', { method: 'PUT', body: { path, content } })
+    .then(({ note: saved }) => {
+      if (kbBrowser.note?.path === saved.path) kbBrowser.note = saved;
+      const f = kbBrowser.files.find((x) => x.path === saved.path);
+      if (f) {
+        f.mtime = saved.mtime;
+        f.size = saved.size;
+      }
+      if (!kbEd.dirty) kbSetSaveState('已保存', 'ok');
+    })
+    .catch((e) => {
+      kbEd.dirty = true;
+      kbSetSaveState('保存失败', 'err');
+      toast(`保存失败：${e.message}`, 'err');
+      throw e;
+    })
+    .finally(() => (kbEd.saving = null));
+  return kbEd.saving;
+}
+
+function kbExitEditor() {
+  clearTimeout(kbEd.timer);
+  try {
+    kbEd.vd?.destroy();
+  } catch {}
+  kbEd.vd = null;
+  kbEd.dirty = false;
+  kbBrowser.editing = false;
+  $('#kbReader')?.classList.remove('editing');
+}
+
+async function mountKbEditor(note) {
+  const box = $('#kbVditor');
+  try {
+    await loadVditor();
+  } catch (e) {
+    box.innerHTML = `<div class="skeleton">${esc(e.message)}</div>`;
+    return;
+  }
+  if (!kbBrowser.editing || kbBrowser.note?.path !== note.path || !document.body.contains(box)) return;
+  const dir = note.dir || '';
+  kbEd.path = note.path;
+  kbEd.dirty = false;
+  const linkBase = `${location.origin}/kbfile/${dir ? dir.split('/').map(encodeURIComponent).join('/') + '/' : ''}`;
+  kbEd.vd = new window.Vditor(box, {
+    mode: 'ir', // 即时渲染：光标所在处显示 md 标记，其余直接渲染，和 Obsidian 实时预览一致
+    lang: 'zh_CN',
+    cdn: '/vendor/vditor',
+    icon: 'ant',
+    value: note.content || '',
+    height: '100%',
+    cache: { enable: false },
+    placeholder: '开始写…（自动保存，Ctrl+S 立即保存）',
+    toolbarConfig: { pin: true },
+    toolbar: [
+      'headings', 'bold', 'italic', 'strike', 'mark', '|',
+      'list', 'ordered-list', 'check', 'quote', 'line', '|',
+      'code', 'inline-code', 'link', 'table', 'upload', '|',
+      'undo', 'redo', '|', 'edit-mode', 'outline',
+    ],
+    outline: { enable: false, position: 'right' },
+    preview: {
+      hljs: { enable: true, style: 'github', lineNumber: false },
+      math: { engine: 'KaTeX', inlineDigit: true },
+      markdown: { autoSpace: false, fixTermTypo: false, mark: true, footnotes: true, toc: true, linkBase },
+    },
+    link: { isOpen: false },
+    upload: {
+      url: '/api/kb/asset',
+      fieldName: 'file[]',
+      extraData: { dir },
+      max: 20 * 1024 * 1024,
+      // 粘贴 / 拖进编辑器的图片存到笔记同目录，插入相对路径（Obsidian 里也能直接显示）
+      format: (files, text) => {
+        let r = {};
+        try {
+          r = JSON.parse(text);
+        } catch {}
+        const succMap = {};
+        (r.saved || []).forEach((p) => {
+          const rel = dir && p.startsWith(dir + '/') ? p.slice(dir.length + 1) : p;
+          succMap[rel.split('/').pop()] = encodeURI(rel);
+        });
+        return JSON.stringify({ msg: r.error || '', code: r.ok ? 0 : 1, data: { errFiles: r.errors || [], succMap } });
+      },
+    },
+    input: () => {
+      kbEd.dirty = true;
+      kbSetSaveState('未保存', 'warn');
+      clearTimeout(kbEd.timer);
+      kbEd.timer = setTimeout(() => kbFlushSave().catch(() => {}), 1200);
+    },
+    keydown: (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        kbFlushSave().catch(() => {});
+      }
+    },
+    after: () => {
+      kbSetSaveState('已保存', 'ok');
+      kbEd.vd?.focus();
+    },
+  });
+}
+
 /** 阅读 / 编辑两种模式；头部吸顶，往下翻也随时能点「目录」「大纲」「编辑」 */
 function renderKbReader() {
   const note = kbBrowser.note;
   const reader = $('#kbReader');
   if (!note) return;
   const editing = kbBrowser.editing;
+  reader.classList.toggle('editing', editing);
   const head = `
     <div class="kb-reader-head">
       <button class="btn sm kb-tree-btn" title="收起 / 展开左侧目录">${KB_TREE_ICON}</button>
       <div class="kb-reader-info">
-        <div class="kb-reader-title">${esc(note.name)}${editing ? ' <span class="kb-editing">编辑中</span>' : ''}</div>
+        <div class="kb-reader-title">${esc(note.name)}${editing ? ' <span class="kb-save-state" id="kbSaveState">加载编辑器…</span>' : ''}</div>
         <div class="kb-reader-meta">${esc(note.path)} · ${note.mtime ? new Date(note.mtime).toLocaleString('zh-CN') : ''} · ${fmtSize(note.size)}</div>
       </div>
       <div class="kb-reader-actions">
         ${
           editing
-            ? `<button class="btn sm primary" id="kbSaveBtn" title="Ctrl+S">保存</button>
-               <button class="btn sm" id="kbCancelBtn">取消</button>`
+            ? `<button class="btn sm primary" id="kbDoneBtn" title="保存并回到阅读视图">完成</button>`
             : `<button class="btn sm kb-toc-btn" id="kbTocBtn" hidden>大纲</button>
-               <button class="btn sm" id="kbEditBtn" title="直接编辑这篇 md（保存后写回原文件）">编辑</button>
+               <button class="btn sm" id="kbEditBtn" title="像 Obsidian 一样边写边渲染（自动保存回原文件）；也可以双击正文进入">编辑</button>
                <button class="btn sm" id="kbOpenExternal" title="选择用哪个软件打开：默认 / Obsidian / VS Code / Typora / 记事本">打开方式 ▾</button>`
         }
       </div>
     </div>`;
 
   if (editing) {
-    reader.innerHTML = `${head}<textarea class="kb-editor" id="kbEditor" spellcheck="false"></textarea>`;
-    const ta = $('#kbEditor');
-    ta.value = note.content || '';
-    ta.focus();
-    ta.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        saveKbNote();
-      } else if (e.key === 'Tab') {
-        e.preventDefault();
-        ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end');
+    reader.innerHTML = `${head}<div class="kb-vditor" id="kbVditor"></div>`;
+    $('#kbDoneBtn').onclick = async () => {
+      try {
+        await kbFlushSave();
+      } catch {
+        return; // 保存失败就留在编辑器里，别丢内容
       }
-    });
-    $('#kbSaveBtn').onclick = saveKbNote;
-    $('#kbCancelBtn').onclick = () => {
-      if (ta.value !== (note.content || '') && !confirm('放弃未保存的修改？')) return;
-      kbBrowser.editing = false;
+      kbExitEditor();
+      renderKbNoteList();
       renderKbReader();
     };
     $('#kbToc').hidden = true;
     $('.kb-browser').classList.remove('has-toc');
+    mountKbEditor(note);
   } else {
     let md = note.content || '';
     // 去掉 YAML frontmatter；双链渲染成纯文本，嵌入图标注出来
@@ -1960,11 +2103,21 @@ function renderKbReader() {
       .replace(/!\[\[([^\]]+)\]\]/g, '🖼 $1')
       .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
       .replace(/\[\[([^\]]+)\]\]/g, '$1');
-    reader.innerHTML = `${head}<div class="kb-reader-body">${mdLite(md)}</div>`;
-    $('#kbEditBtn').onclick = () => {
+    // 笔记里的相对路径图片（如 ![](img.png)）按笔记所在目录从知识库取：渲染前就改写 md，避免先发错误请求
+    const base = `/kbfile/${note.dir ? note.dir.split('/').map(encodeURIComponent).join('/') + '/' : ''}`;
+    const fixSrc = (src) => (/^(https?:|data:|blob:|\/|#)/i.test(src) ? src : base + src.replace(/^\.\//, ''));
+    md = md
+      .replace(/(!\[[^\]]*\]\()\s*<?([^)\s>]+)>?/g, (m, pre, src) => pre + fixSrc(src))
+      .replace(/(<img\b[^>]*\bsrc=["'])([^"']+)/gi, (m, pre, src) => pre + fixSrc(src));
+    reader.innerHTML = `${head}<div class="kb-reader-body" title="双击进入编辑">${mdLite(md)}</div>`;
+    const enterEdit = () => {
       kbBrowser.editing = true;
       renderKbReader();
     };
+    $('#kbEditBtn').onclick = enterEdit;
+    reader.querySelector('.kb-reader-body').addEventListener('dblclick', (e) => {
+      if (!e.target.closest('a')) enterEdit();
+    });
     const openBtn = $('#kbOpenExternal');
     openBtn.onclick = async () => {
       const apps = await openApps();
@@ -1987,30 +2140,6 @@ function renderKbReader() {
   }
   reader.querySelector('.kb-reader-head .kb-tree-btn').onclick = toggleKbTree;
   applyKbTree();
-}
-
-async function saveKbNote() {
-  const ta = $('#kbEditor');
-  const note = kbBrowser.note;
-  if (!ta || !note) return;
-  const btn = $('#kbSaveBtn');
-  if (btn) btn.disabled = true;
-  try {
-    const { note: saved } = await api('/api/kb/note', { method: 'PUT', body: { path: note.path, content: ta.value } });
-    kbBrowser.note = saved;
-    kbBrowser.editing = false;
-    const f = kbBrowser.files.find((x) => x.path === saved.path);
-    if (f) {
-      f.mtime = saved.mtime;
-      f.size = saved.size;
-    }
-    renderKbNoteList();
-    renderKbReader();
-    toast('已保存到原文件', 'ok', 1600);
-  } catch (e) {
-    toast(e.message, 'err');
-    if (btn) btn.disabled = false;
-  }
 }
 
 /* 外部文件拖进知识库：拖到某个文件夹上 = 导入到那个文件夹；拖到别处 = 当前笔记所在目录 */
@@ -2053,7 +2182,8 @@ function bindKbDrop() {
   const box = $('#kbBrowserBox');
   const mask = $('#kbDrop');
   let depth = 0;
-  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  // 拖进编辑器里的图片交给编辑器自己处理（插到光标处），这里不当成导入笔记
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files') && !e.target.closest?.('.vditor');
   const hide = () => {
     depth = 0;
     mask.hidden = true;
@@ -2066,7 +2196,9 @@ function bindKbDrop() {
     mask.hidden = false;
   });
   box.addEventListener('dragover', (e) => {
+    if (e.target.closest?.('.vditor')) mask.hidden = true;
     if (!hasFiles(e)) return;
+    mask.hidden = false;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     const dir = kbDropDirAt(e.target);
@@ -2866,6 +2998,12 @@ function togglePanel(which) {
 }
 
 function switchView(view) {
+  // 离开知识库时正在编辑：自动保存并退回阅读视图
+  if (kbBrowser.editing && view !== 'knowledge') {
+    kbFlushSave().catch(() => {});
+    kbExitEditor();
+    renderKbReader();
+  }
   state.view = view;
   $('#selToolbar').hidden = true;
   closePop();
@@ -3175,6 +3313,18 @@ function bind() {
     e.target.value = '';
   };
   bindKbDrop();
+  // 关窗口 / 刷新时还有没存的编辑：用 keepalive 请求兜底写回
+  window.addEventListener('beforeunload', () => {
+    if (!kbEd.vd || !kbEd.dirty) return;
+    try {
+      fetch('/api/kb/note', {
+        method: 'PUT',
+        keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: kbEd.path, content: kbEd.vd.getValue() }),
+      });
+    } catch {}
+  });
   // 文件拖到别处时别让窗口直接跳去打开它
   document.addEventListener('dragover', (e) => e.preventDefault());
   document.addEventListener('drop', (e) => e.preventDefault());

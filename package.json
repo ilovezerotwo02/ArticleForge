@@ -1,6 +1,6 @@
 {
   "name": "articleforge",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "private": true,
   "description": "ArticleForge - 微信/网页文章转 PDF / DOCX / Markdown，带 AI 侧栏、全网检索监控与 Obsidian 知识库沉淀",
   "author": {
@@ -38,7 +38,8 @@
   "devDependencies": {
     "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
-    "png-to-ico": "^2.1.8"
+    "png-to-ico": "^2.1.8",
+    "vditor": "^4.0.1"
   },
   "build": {
     "appId": "com.articleforge.app",

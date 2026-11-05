@@ -31,6 +31,14 @@ copyFile(path.join(katex, 'katex.min.js'), path.join(out, 'katex/katex.min.js'))
 copyFile(path.join(katex, 'katex.min.css'), path.join(out, 'katex/katex.min.css'));
 copyDir(path.join(katex, 'fonts'), path.join(out, 'katex/fonts'));
 
+// Vditor（知识库所见即所得编辑器，Obsidian / Typora 式即时渲染）：只拷核心 + 必需的子资源，不连 CDN
+const vd = path.join(nm, 'vditor/dist');
+const vdOut = path.join(out, 'vditor/dist');
+copyFile(path.join(vd, 'index.min.js'), path.join(vdOut, 'index.min.js'));
+copyFile(path.join(vd, 'index.css'), path.join(vdOut, 'index.css'));
+for (const sub of ['css', 'images']) if (fs.existsSync(path.join(vd, sub))) copyDir(path.join(vd, sub), path.join(vdOut, sub));
+for (const sub of ['lute', 'i18n', 'icons', 'highlight.js', 'katex']) copyDir(path.join(vd, 'js', sub), path.join(vdOut, 'js', sub));
+
 const size = (p) => {
   let total = 0;
   const walk = (dir) => {

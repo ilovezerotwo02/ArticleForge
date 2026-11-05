@@ -1085,3 +1085,31 @@ body.has-bg .kb-reader-head { background: rgba(255, 255, 255, 0.94); backdrop-fi
 .kb-reader-info { flex: 1 1 200px; min-width: 0; }
 .kb-reader-info .kb-reader-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
 .kb-reader-actions { flex-wrap: wrap; margin-left: auto; }
+
+/* ============ v1.0.9 知识库 Obsidian 式编辑（Vditor 即时渲染） ============ */
+.kb-reader.editing { overflow: hidden; }
+.kb-reader.editing .kb-reader-head { margin-bottom: 0; }
+.kb-vditor { flex: 1; min-height: 0; margin: 0 -22px; display: flex; flex-direction: column; }
+.kb-vditor.vditor { border: 0; border-radius: 0 0 10px 10px; }
+.kb-vditor .vditor-toolbar { padding-left: 16px !important; background: var(--panel-2); border-bottom: 1px solid var(--line); }
+.kb-vditor .vditor-content { flex: 1; min-height: 0; }
+.kb-vditor .vditor-reset {
+  font-size: 14.5px; line-height: 1.8; color: var(--ink);
+  font-family: "Microsoft YaHei UI", "PingFang SC", -apple-system, "Segoe UI", sans-serif;
+}
+.kb-vditor .vditor-ir pre.vditor-reset { padding: 18px 34px 60px !important; background: #fff; }
+.kb-vditor .vditor-ir__marker { color: #9aa1b5; }
+.kb-vditor .vditor-reset h1, .kb-vditor .vditor-reset h2 { border-bottom: 0; }
+.kb-save-state {
+  font-size: 11px; font-weight: 600; border-radius: 10px; padding: 1px 8px; vertical-align: 2px; margin-left: 6px;
+  color: var(--ink-3); background: var(--panel-2);
+}
+.kb-save-state.ok { color: #16875a; background: #e8f7ef; }
+.kb-save-state.warn { color: #b26a00; background: #fff4dc; }
+.kb-save-state.err { color: #c62828; background: #fdecec; }
+body.has-bg .kb-vditor .vditor-ir pre.vditor-reset { background: rgba(255, 255, 255, calc(var(--panel-a, 0.66) * 0.8)); }
+body.has-bg .kb-vditor .vditor-toolbar { background: rgba(255, 255, 255, 0.9); }
+body.has-bg .kb-vditor.vditor { background: transparent; }
+.kb-vditor .vditor-ir, .kb-vditor .vditor-content { background: #fff; }
+.kb-vditor .vditor-reset pre > code { background: #f6f8fa; border-radius: 6px; }
+body.has-bg .kb-vditor .vditor-ir, body.has-bg .kb-vditor .vditor-content { background: transparent; }

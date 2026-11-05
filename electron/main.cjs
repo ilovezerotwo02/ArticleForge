@@ -201,41 +201,93 @@ ipcMain.on('af:overlay', (e, opt) => {
   } catch {}
 });
 
-/** 在本软件里直接打开网页原样（不跳系统浏览器）：独立子窗口，带返回/前进/外部打开 */
+/**
+ * 在本软件里直接打开网页原样（不跳系统浏览器）：只用一个复用的子窗口，带返回/前进/外部打开。
+ * 修复：
+ * - 网页注册了 beforeunload 时 Electron 默认会静默取消关闭 → 点 × 没反应。这里一律放行关闭。
+ * - 每点一次就新开一个窗口 → 改成复用同一个窗口，只换网址。
+ * - Electron 默认 UA 带 "Electron/xx"，不少站点（含公众号）会给白页 → 换成普通 Chrome UA。
+ * - 加载失败不再是一片白，显示原因和网址；Esc 直接关闭。
+ */
+let webWin = null;
+const CHROME_UA = () => {
+  const v = process.versions.chrome || '130.0.0.0';
+  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v} Safari/537.36`;
+};
+
 function openInAppWindow(url) {
   if (!/^https?:\/\//i.test(String(url || ''))) return;
+  if (webWin && !webWin.isDestroyed()) {
+    webWin.loadURL(url, { userAgent: CHROME_UA() });
+    if (webWin.isMinimized()) webWin.restore();
+    webWin.show();
+    webWin.focus();
+    return;
+  }
   const child = new BrowserWindow({
     width: Math.min(1280, (win && win.getBounds().width) || 1200),
     height: Math.min(900, (win && win.getBounds().height) || 860),
-    parent: undefined,
-    title: '网页查看 · ArticleForge',
+    title: '网页查看 · 加载中…',
     icon: path.join(ROOT, 'build', 'icon.png'),
-    autoHideMenuBar: true,
+    autoHideMenuBar: false,
     backgroundColor: '#ffffff',
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
   });
+  webWin = child;
+  const wc = child.webContents;
+  const forceClose = () => {
+    if (!child.isDestroyed()) child.destroy();
+  };
   child.setMenu(
     Menu.buildFromTemplate([
-      { label: '← 后退', accelerator: 'Alt+Left', click: () => child.webContents.navigationHistory?.canGoBack() && child.webContents.navigationHistory.goBack() },
-      { label: '前进 →', accelerator: 'Alt+Right', click: () => child.webContents.navigationHistory?.canGoForward() && child.webContents.navigationHistory.goForward() },
-      { label: '刷新', accelerator: 'F5', click: () => child.webContents.reload() },
-      { label: '在系统浏览器打开', click: () => shell.openExternal(child.webContents.getURL()) },
+      { label: '← 后退', accelerator: 'Alt+Left', click: () => wc.navigationHistory?.canGoBack() && wc.navigationHistory.goBack() },
+      { label: '前进 →', accelerator: 'Alt+Right', click: () => wc.navigationHistory?.canGoForward() && wc.navigationHistory.goForward() },
+      { label: '刷新', accelerator: 'F5', click: () => wc.reload() },
+      { label: '在系统浏览器打开', click: () => shell.openExternal(wc.getURL()) },
       { label: '收入资料库', click: () => {
-          const u = child.webContents.getURL();
+          const u = wc.getURL();
           if (win) {
             win.show();
             win.webContents.executeJavaScript(`window.afConvertUrl && window.afConvertUrl(${JSON.stringify(u)})`).catch(() => {});
           }
         } },
+      { label: '关闭（Esc）', click: forceClose },
     ])
   );
   child.setMenuBarVisibility(true);
-  child.webContents.setWindowOpenHandler(({ url: u }) => {
-    if (/^https?:\/\//.test(u)) child.loadURL(u);
+  // 页面拦截关闭（beforeunload）一律放行，保证 × 一定能关掉
+  wc.on('will-prevent-unload', (e) => e.preventDefault());
+  // 兜底：页面卡死不响应时，点关闭 1 秒后强制销毁
+  child.on('close', () => setTimeout(forceClose, 1000));
+  child.on('closed', () => {
+    if (webWin === child) webWin = null;
+  });
+  wc.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') {
+      e.preventDefault();
+      forceClose();
+    }
+  });
+  wc.setWindowOpenHandler(({ url: u }) => {
+    if (/^https?:\/\//.test(u)) child.loadURL(u, { userAgent: CHROME_UA() });
     return { action: 'deny' };
   });
-  child.webContents.on('page-title-updated', (e, t) => child.setTitle(`${t} · 网页查看`));
-  child.loadURL(url);
+  wc.on('page-title-updated', (e, t) => {
+    e.preventDefault();
+    child.setTitle(`${t} · 网页查看`);
+  });
+  wc.on('did-fail-load', (e, code, desc, failedUrl, isMainFrame) => {
+    if (!isMainFrame || code === -3) return; // -3 = 被新的跳转打断，不算失败
+    const safe = (s) => String(s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    const html = `<!doctype html><meta charset="utf-8"><title>打开失败</title>
+      <body style="font:14px/1.8 'Microsoft YaHei UI',sans-serif;color:#333;padding:48px;max-width:720px;margin:auto">
+      <h2 style="margin:0 0 8px">网页没有打开</h2>
+      <p>原因：${safe(desc)}（${code}）</p>
+      <p style="word-break:break-all;color:#666">${safe(failedUrl)}</p>
+      <p>可以点上方菜单「刷新」重试，或「在系统浏览器打开」；按 Esc 关闭这个窗口。</p></body>`;
+    wc.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(() => {});
+  });
+  child.loadURL(url, { userAgent: CHROME_UA() });
 }
 
 ipcMain.on('af:open-in-app', (e, url) => openInAppWindow(url));

@@ -186,7 +186,7 @@ export default {
   key: 'notion',
   label: 'Notion',
   kind: 'api',
-  desc: '写入指定数据库，标题/标签进属性，正文转成 Notion 块（标题、列表、代码块）',
+  desc: '写入指定数据库，标题与标签写入属性，正文转为 Notion 块',
 
   status() {
     const i = info();

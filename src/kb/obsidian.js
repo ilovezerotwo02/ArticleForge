@@ -19,7 +19,7 @@ export default {
   key: 'obsidian',
   label: 'Obsidian',
   kind: 'file',
-  desc: '写入 vault 目录，YAML frontmatter + 双链 + 概念笔记 + MOC 索引',
+  desc: '写入 vault 目录，包含 YAML frontmatter、双链、概念笔记与索引',
 
   status() {
     const i = info();

@@ -34,7 +34,7 @@ export default {
   key: 'siyuan',
   label: '思源笔记',
   kind: 'api',
-  desc: '通过思源本地 API 直接建文档，自动建概念文档并用块引用互链',
+  desc: '通过思源本地 API 创建文档，概念文档之间以块引用相互链接',
 
   status() {
     const i = info();

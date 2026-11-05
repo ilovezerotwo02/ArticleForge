@@ -14,7 +14,8 @@ const page = await browser.newPage();
 await page.setContent('<html><body style="margin:0;background:transparent"></body></html>', { waitUntil: 'load' });
 
 /** 在 canvas 上直接绘制图标，避免依赖 PNG 解码
- * 设计：深靛紫渐变底 + 微倾斜的文章页（折角 + 文字行）+ 琥珀色「锻造火花」
+ * 设计：墨黑底板 + 一页暖白纸（标题与正文行）+ 一道朱红书签 —— 「排好版、归了档」
+ * 全部纯色，不用渐变、辉光；小尺寸自动简化线条，16px 也认得出
  */
 async function draw(size) {
   return page.evaluate(async (size) => {
@@ -23,117 +24,59 @@ async function draw(size) {
     c.height = size;
     const ctx = c.getContext('2d');
     const S = size;
-    const r = S * 0.225;
+    const u = S / 100; // 统一按 100 网格设计，和应用内 SVG 标完全一致
+    const small = S <= 32;
 
-    // 底板：靛蓝 → 紫 → 品红对角渐变
-    ctx.beginPath();
-    ctx.roundRect(0, 0, S, S, r);
-    ctx.clip();
-    const g = ctx.createLinearGradient(0, 0, S, S);
-    g.addColorStop(0, '#4338ca');
-    g.addColorStop(0.5, '#6d28d9');
-    g.addColorStop(1, '#a21caf');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, S, S);
+    const INK = '#1c1b19';
+    const PAPER = '#f4f1ea';
+    const RULE = '#cfc9bd';
+    const SEAL = '#b42318';
 
-    // 左上柔光 + 右下暗角，让底色有层次
-    const hl = ctx.createRadialGradient(S * 0.28, S * 0.22, 0, S * 0.28, S * 0.22, S * 0.85);
-    hl.addColorStop(0, 'rgba(255,255,255,.30)');
-    hl.addColorStop(0.55, 'rgba(255,255,255,0)');
-    ctx.fillStyle = hl;
-    ctx.fillRect(0, 0, S, S);
-    const vg = ctx.createRadialGradient(S * 0.74, S * 0.84, S * 0.1, S * 0.74, S * 0.84, S * 0.95);
-    vg.addColorStop(0, 'rgba(0,0,0,.20)');
-    vg.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = vg;
-    ctx.fillRect(0, 0, S, S);
+    // 底板
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.roundRect(0, 0, S, S, 22 * u);
+    ctx.fill();
 
-    // 文章页：白色圆角矩形，微倾斜 -6°，右上折角
-    ctx.save();
-    ctx.translate(S * 0.48, S * 0.52);
-    ctx.rotate(-0.105);
-    const pw = S * 0.52;
-    const ph = S * 0.63;
-    const x0 = -pw / 2;
-    const y0 = -ph / 2;
-    const fold = S * 0.10;
-    ctx.shadowColor = 'rgba(0,0,0,.35)';
-    ctx.shadowBlur = S * 0.06;
-    ctx.shadowOffsetY = S * 0.02;
-    ctx.fillStyle = '#ffffff';
+    // 纸页
+    ctx.fillStyle = PAPER;
     ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x0 + pw - fold, y0);
-    ctx.lineTo(x0 + pw, y0 + fold);
-    ctx.lineTo(x0 + pw, y0 + ph);
-    ctx.lineTo(x0, y0 + ph);
-    ctx.closePath();
+    ctx.roundRect(25 * u, 19 * u, 50 * u, 62 * u, 3 * u);
     ctx.fill();
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetY = 0;
-    // 折角
-    ctx.fillStyle = '#d7ddf1';
-    ctx.beginPath();
-    ctx.moveTo(x0 + pw - fold, y0);
-    ctx.lineTo(x0 + pw, y0 + fold);
-    ctx.lineTo(x0 + pw - fold, y0 + fold);
-    ctx.closePath();
-    ctx.fill();
-    // 文字行：标题粗条 + 两行正文 + 一行高亮代码
-    ctx.fillStyle = '#7c86ad';
-    ctx.beginPath();
-    ctx.roundRect(x0 + pw * 0.16, y0 + ph * 0.20, pw * 0.52, S * 0.036, S * 0.018);
-    ctx.fill();
-    ctx.fillStyle = '#c9d0e6';
-    ctx.beginPath();
-    ctx.roundRect(x0 + pw * 0.16, y0 + ph * 0.38, pw * 0.68, S * 0.024, S * 0.012);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.roundRect(x0 + pw * 0.16, y0 + ph * 0.52, pw * 0.58, S * 0.024, S * 0.012);
-    ctx.fill();
-    ctx.fillStyle = '#818cf8';
-    ctx.beginPath();
-    ctx.roundRect(x0 + pw * 0.16, y0 + ph * 0.70, pw * 0.40, S * 0.024, S * 0.012);
-    ctx.fill();
-    ctx.restore();
 
-    // 锻造火花：四角星（琥珀渐变 + 辉光）+ 一粒小火星
-    ctx.save();
-    ctx.translate(S * 0.775, S * 0.735);
-    ctx.rotate(0.18);
-    const R1 = S * 0.125;
-    const R2 = S * 0.042;
-    const spark = ctx.createLinearGradient(-R1, -R1, R1, R1);
-    spark.addColorStop(0, '#fef3c7');
-    spark.addColorStop(0.55, '#fbbf24');
-    spark.addColorStop(1, '#f59e0b');
-    ctx.shadowColor = 'rgba(251,191,36,.95)';
-    ctx.shadowBlur = S * 0.07;
-    ctx.fillStyle = spark;
-    ctx.beginPath();
-    for (let i = 0; i < 8; i++) {
-      const ang = (Math.PI / 4) * i - Math.PI / 2;
-      const rad = i % 2 === 0 ? R1 : R2;
-      const px = Math.cos(ang) * rad;
-      const py = Math.sin(ang) * rad;
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+    const bar = (x, y, w, h, color) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.roundRect(x * u, y * u, w * u, h * u, Math.min(h * u / 2, 1.5 * u));
+      ctx.fill();
+    };
+
+    if (small) {
+      // 小图标：一条标题 + 两行正文，线更粗
+      bar(32, 31, 20, 7, INK);
+      bar(32, 48, 36, 6, RULE);
+      bar(32, 62, 28, 6, RULE);
+    } else {
+      bar(32, 30, 20, 4.5, INK);
+      bar(32, 42, 25, 3, RULE);
+      bar(32, 51, 36, 3, RULE);
+      bar(32, 60, 30, 3, RULE);
+      bar(32, 69, 22, 3, RULE);
     }
+
+    // 朱红书签：从纸页上沿垂下，底部燕尾
+    ctx.fillStyle = SEAL;
+    ctx.beginPath();
+    const bx = small ? 57 : 59;
+    const bw = small ? 11 : 8.5;
+    const bh = small ? 26 : 22;
+    ctx.moveTo(bx * u, 19 * u);
+    ctx.lineTo((bx + bw) * u, 19 * u);
+    ctx.lineTo((bx + bw) * u, (19 + bh) * u);
+    ctx.lineTo((bx + bw / 2) * u, (19 + bh - bw * 0.5) * u);
+    ctx.lineTo(bx * u, (19 + bh) * u);
     ctx.closePath();
     ctx.fill();
-    ctx.beginPath();
-    ctx.arc(-S * 0.062, -S * 0.088, S * 0.018, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // 内描边：小尺寸下轮廓更清晰
-    const lw = Math.max(1, S * 0.012);
-    ctx.strokeStyle = 'rgba(255,255,255,.22)';
-    ctx.lineWidth = lw;
-    ctx.beginPath();
-    ctx.roundRect(lw / 2, lw / 2, S - lw, S - lw, r - lw / 2);
-    ctx.stroke();
 
     const data = ctx.getImageData(0, 0, size, size).data;
     return { pixels: Array.from(data), png: c.toDataURL('image/png') };

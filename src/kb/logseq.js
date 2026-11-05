@@ -23,7 +23,7 @@ export default {
   key: 'logseq',
   label: 'Logseq',
   kind: 'file',
-  desc: '写入 graph/pages，大纲块 + 页面属性 + [[双链]]，概念各建一页',
+  desc: '写入 graph/pages，使用大纲块、页面属性与双链，每个概念单独一页',
 
   status() {
     const i = info();

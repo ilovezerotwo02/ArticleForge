@@ -1,5 +1,14 @@
 /* ArticleForge 前端 */
 const $ = (s, r = document) => r.querySelector(s);
+
+/* 线性图标：一套、同尺寸、同描边，颜色跟随文字 */
+const IC = {
+  folder: '<svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>',
+  file: '<svg class="ico" viewBox="0 0 24 24"><path d="M6.5 3.5h7.5l4 4v13h-11.5z"/><path d="M14 3.5v4h4"/></svg>',
+  tag: '<svg class="bi" viewBox="0 0 24 24"><path d="M3.5 4.5v6.6l8.4 8.4a1.6 1.6 0 0 0 2.3 0l5.3-5.3a1.6 1.6 0 0 0 0-2.3L11.1 3.5H4.5a1 1 0 0 0-1 1z"/><circle cx="8" cy="8" r="1.2"/></svg>',
+  pin: '<svg viewBox="0 0 24 24"><path d="M12 16.5V21"/><path d="M8.5 4h7l-1 5.5 3 3.5v1.5h-11V13l3-3.5z"/></svg>',
+  pinOn: '<svg viewBox="0 0 24 24"><path d="M12 16.5V21"/><path d="M8.5 4h7l-1 5.5 3 3.5v1.5h-11V13l3-3.5z" fill="currentColor"/></svg>',
+};
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
 const state = {
@@ -322,7 +331,7 @@ function renderLibrary() {
   const todoCount = state.articles.filter((a) => (a.userTags || []).includes('未完成')).length;
   const badge = $('#todoBadge');
   badge.hidden = !state.articles.length;
-  badge.innerHTML = `未完成 <b>${todoCount}</b>`;
+  badge.innerHTML = `未完成 <b class="${todoCount ? 'n' : ''}">${todoCount}</b>`;
   badge.classList.toggle('on', state.tagFilter === '未完成');
 
   // 标签筛选栏：常驻显示。内置状态标签（未完成/进行中/已完成/重要）排在前面，
@@ -364,10 +373,10 @@ function renderLibrary() {
           <span class="badge ${a.source === 'wechat' ? 'wx' : a.source === 'upload' ? 'up' : ''}">${
         a.source === 'wechat' ? '公众号' : a.source === 'upload' ? (a.sourceKind || '文件').toUpperCase() : '网页'
       }</span>
-          <span>${a.words || 0} 字</span>
+          <span>${Number(a.words || 0).toLocaleString('en-US')} 字</span>
           ${a.assets ? `<span>${a.assets} 图</span>` : ''}
           <button class="tagadd ${utags.length ? 'has' : ''}" data-tagedit="${a.id}" title="${utags.length ? `标签：${esc(utags.join('、'))}` : '编辑标签'}">${
-        utags.length ? `🏷${utags.length}` : '＋标签'
+        utags.length ? `标签 ${utags.length}` : '加标签'
       }</button>
           <span style="margin-left:auto">${fmtDate(a.createdAt)}</span>
         </div>
@@ -397,8 +406,8 @@ function openTagEditor(id) {
 
   const rowHtml = () =>
     working.length
-      ? working.map((t) => `<button class="chip active" data-rm="${esc(t)}" title="点击移除">${esc(t)} ✕</button>`).join('')
-      : '<span class="hint">还没有标签，从下面选或自己输入</span>';
+      ? working.map((t) => `<button class="chip active" data-rm="${esc(t)}" title="点击移除">${esc(t)} ×</button>`).join('')
+      : '<span class="hint">暂无标签，可从下方选择或输入</span>';
   const presetHtml = () =>
     TAG_PRESETS.filter((p) => !working.includes(p))
       .map((p) => `<button class="chip preset" data-add="${esc(p)}"${p === '未完成' ? ' title="用「未完成」标记还没看完/没办完的事"' : ''}><span class="cl">${esc(p)}</span></button>`)
@@ -421,7 +430,7 @@ function openTagEditor(id) {
         <datalist id="teAllTags">${allTags.map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist>
         <button class="btn sm primary" id="teAddBtn">添加</button>
       </div>
-      <div class="hint">最多 12 个；「未完成 / 进行中 / 已完成」这类状态标签可用来追踪没办完的事，左侧列表顶部可按标签筛选。</div>
+      <div class="hint">最多 12 个。状态类标签（未完成、进行中、已完成）可在资料库顶部筛选</div>
     </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">取消</button>
@@ -503,7 +512,7 @@ function renderTopActions() {
   const utags = a.userTags || [];
   $('#topbarActions').innerHTML = `
     ${utags.length ? `<span class="top-tags">${utags.map((t) => `<span class="a-tag ${t === '未完成' ? 'todo' : ''}">${esc(t)}</span>`).join('')}</span>` : ''}
-    <button class="btn sm" id="btnTags" title="编辑这篇文章的标签">🏷 标签</button>
+    <button class="btn sm" id="btnTags" title="编辑这篇文章的标签">${IC.tag}标签</button>
     <button class="btn sm" id="btnExport">导出 PDF · DOCX · MD</button>
     ${a.url ? `<button class="btn sm ghost" id="btnOrigin" title="查看原网页：本软件内 / 浏览器">原网页 ▾</button>` : ''}
   `;
@@ -980,7 +989,7 @@ function openExportModal() {
     $('#exportProgress').innerHTML = '<div class="p-step"><span class="spinner"></span> 正在生成，PDF 渲染约需 5~15 秒…</div>';
     try {
       const res = await api(`/api/articles/${a.id}/export`, { method: 'POST', body: { formats } });
-      $('#exportProgress').innerHTML = '<div class="p-step done">✓ 导出完成</div>';
+      $('#exportProgress').innerHTML = '<div class="p-step done">导出完成</div>';
       const links = res.files
         .map(
           (f) => `<a class="btn sm" href="${f.url}" download>${f.name} · ${fmtSize(f.size)}</a>`
@@ -990,7 +999,7 @@ function openExportModal() {
         <div class="hint" style="margin-top:8px">文件目录：${esc(res.dir)}</div>`);
       toast('导出完成', 'ok');
     } catch (e) {
-      $('#exportProgress').innerHTML = `<div class="p-step err">✕ ${esc(e.message)}</div>`;
+      $('#exportProgress').innerHTML = `<div class="p-step err">${esc(e.message)}</div>`;
       btn.disabled = false;
     }
   };
@@ -1009,7 +1018,7 @@ function openOrganizeModal() {
   openModal(
     `
     <h2>AI 整理 · 预览确认后入库</h2>
-    <p class="sub">${esc(a.title)} · 共 ${a.words || 0} 字 · 整理完会先给你看内容和目录</p>
+    <p class="sub">${esc(a.title)} · ${Number(a.words || 0).toLocaleString('en-US')} 字 · 整理结果会先预览，确认后再写入</p>
 
     <div class="field">
       <label>整理模板</label>
@@ -1108,14 +1117,14 @@ function openOrganizeModal() {
           payload = data;
           prog.insertAdjacentHTML(
             'beforeend',
-            `<div class="p-step done">✓ 已整理：${data.organized.points?.length || 0} 个知识点、${data.organized.concepts?.length || 0} 个概念</div>`
+            `<div class="p-step done">已整理：${data.organized.points?.length || 0} 个知识点、${data.organized.concepts?.length || 0} 个概念</div>`
           );
         } else if (ev === 'error') {
-          prog.insertAdjacentHTML('beforeend', `<div class="p-step err">✕ ${esc(data.message)}</div>`);
+          prog.insertAdjacentHTML('beforeend', `<div class="p-step err">${esc(data.message)}</div>`);
         }
       });
     } catch (e) {
-      prog.insertAdjacentHTML('beforeend', `<div class="p-step err">✕ ${esc(e.message)}</div>`);
+      prog.insertAdjacentHTML('beforeend', `<div class="p-step err">${esc(e.message)}</div>`);
     } finally {
       btn.disabled = false;
     }
@@ -1151,7 +1160,7 @@ function renderOrganizePreview({ organized, categories, target, singleFile = tru
           <label>写入目录</label>
           <div class="dir-picker-wrap">
             <button class="dir-picker" id="pvDirBtn" ${routable ? '' : 'disabled'} type="button">
-              <span class="dir-ico">📁</span>
+              <span class="dir-ico">${IC.folder}</span>
               <span id="pvDirLabel">${selected ? esc(selected) : `默认目录（${esc(categories?.defaultDir || target?.dir || '根目录')}）`}</span>
               <span class="dir-caret">▾</span>
             </button>
@@ -1179,7 +1188,7 @@ function renderOrganizePreview({ organized, categories, target, singleFile = tru
         </div>` : ''}
       </div>
 
-      ${organized.warnings?.length ? `<div class="pv-warn">${organized.warnings.map((w) => `⚠ ${esc(w)}`).join('<br>')}</div>` : ''}
+      ${organized.warnings?.length ? `<div class="pv-warn">${organized.warnings.map((w) => esc(w)).join('<br>')}</div>` : ''}
 
       <div class="pv-label">内容预览</div>
       <div class="pv-body" id="pvBody">${mdLite(organized.markdown || '')}</div>
@@ -1229,7 +1238,7 @@ function renderOrganizePreview({ organized, categories, target, singleFile = tru
               rows.push(
                 `<div class="dir-row file" data-filepick="${esc(n.path)}" data-filename="${esc(f)}" style="padding-left:${20 + depth * 13}px">
                   <span class="dir-tw leaf">·</span>
-                  <span class="dir-name" title="${esc(f)}.md">📄 ${esc(f)}</span>
+                  <span class="dir-name" title="${esc(f)}.md">${esc(f)}</span>
                 </div>`
               );
             }
@@ -1485,11 +1494,11 @@ function renderChat() {
   if (!state.chat.length) {
     const t = chatTarget();
     box.innerHTML = `<div class="msg assistant">
-      <div class="who">AI 阅读助手</div>
-      <div class="bubble"><p>${t ? `我已经读完${t.kind === 'kb' ? '这篇笔记' : '这篇文章'}${t.name ? `「${esc(t.name)}」` : ''}。你可以：` : '先打开一篇文章，或在知识库里选一篇笔记。然后你可以：'}</p>
-      <ul><li>选中正文任意文字，点「添加到对话」或「在侧边聊天中提问」（右键也有）</li>
-      <li>直接问我里面的命令、原理或疑点</li>
-      <li>让我把知识点整理进知识库</li></ul></div></div>`;
+      <div class="who">阅读助手</div>
+      <div class="bubble"><p>${t ? `当前${t.kind === 'kb' ? '笔记' : '文章'}：${t.name ? `「${esc(t.name)}」` : ''}` : '打开一篇文章或知识库笔记后，可在此提问'}</p>
+      <ul><li>选中正文文字，可添加到对话或直接提问，右键菜单同样可用</li>
+      <li>可询问文中的命令、原理与细节</li>
+      <li>可将要点整理后写入知识库</li></ul></div></div>`;
     return;
   }
   box.innerHTML = state.chat
@@ -1499,7 +1508,7 @@ function renderChat() {
           m.selection ? `<div class="cite" title="${esc(m.selection.slice(0, 500))}">引用：${esc(m.selection.slice(0, 60))}${m.selection.length > 60 ? '…' : ''}</div>` : ''
         }<div class="bubble">${esc(m.content)}</div></div>`;
       }
-      return `<div class="msg assistant"><div class="who">AI 阅读助手</div><div class="bubble">${mdLite(m.content)}</div></div>`;
+      return `<div class="msg assistant"><div class="who">阅读助手</div><div class="bubble">${mdLite(m.content)}</div></div>`;
     })
     .join('');
   box.scrollTop = box.scrollHeight;
@@ -1508,7 +1517,7 @@ function renderChat() {
 async function sendMessage(text, selection = '') {
   if (state.streaming) return;
   const target = chatTarget();
-  if (!target) return toast('请先打开一篇文章，或在知识库里选一篇笔记', 'err');
+  if (!target) return toast('请先打开文章或知识库笔记', 'err');
   const q = (text || '').trim();
   if (!q && !selection) return;
 
@@ -1521,7 +1530,7 @@ async function sendMessage(text, selection = '') {
 
   const bubble = document.createElement('div');
   bubble.className = 'msg assistant';
-  bubble.innerHTML = '<div class="who">AI 阅读助手</div><div class="bubble caret"></div>';
+  bubble.innerHTML = '<div class="who">阅读助手</div><div class="bubble caret"></div>';
   $('#chat').appendChild(bubble);
   const bubbleBody = bubble.querySelector('.bubble');
   $('#chat').scrollTop = $('#chat').scrollHeight;
@@ -1580,10 +1589,10 @@ function setSelection(text) {
     $('#ctxText').textContent = state.selection;
     const n = state.selection.length;
     $('#ctxLabel').textContent = `引用选中内容 · ${n} 字`;
-    $('#composer').placeholder = '针对引用的内容提问…（Enter 发送）';
+    $('#composer').placeholder = '针对引用内容提问，Enter 发送';
   } else {
     box.hidden = true;
-    $('#composer').placeholder = '就这篇文章提问…（Enter 发送，Shift+Enter 换行）';
+    $('#composer').placeholder = '提问，Enter 发送';
   }
 }
 
@@ -1621,18 +1630,18 @@ async function copyText(text) {
 /** 添加到对话：追加到输入框的引用块里（可以多次添加，拼在一起） */
 function addSelToChat(text) {
   if (!text) return;
-  if (!chatTarget()) return toast('请先打开一篇文章，或在知识库里选一篇笔记', 'err');
+  if (!chatTarget()) return toast('请先打开文章或知识库笔记', 'err');
   ensureAiPane();
   const cur = state.selection;
   setSelection(cur && !cur.includes(text) ? `${cur}\n\n${text}` : cur || text);
   $('#composer').focus();
-  toast('已添加到对话，可以继续选别的段落一起问', 'ok', 1800);
+  toast('已添加到对话', 'ok', 1500);
 }
 
 /** 在侧边聊天中提问：引用这段 + 预填问题并选中，直接改问题或回车即可 */
 function askSelInChat(text) {
   if (!text) return;
-  if (!chatTarget()) return toast('请先打开一篇文章，或在知识库里选一篇笔记', 'err');
+  if (!chatTarget()) return toast('请先打开文章或知识库笔记', 'err');
   ensureAiPane();
   setSelection(text);
   const box = $('#composer');
@@ -1743,7 +1752,7 @@ function runEdit(cmd, target) {
     navigator.clipboard
       ?.readText()
       .then((t) => t && document.execCommand('insertText', false, t))
-      .catch(() => toast('浏览器不允许读取剪贴板，请用 Ctrl+V', 'err'));
+      .catch(() => toast('无法读取剪贴板，请使用 Ctrl+V', 'err'));
     return;
   }
   document.execCommand(cmd);
@@ -1865,8 +1874,8 @@ function renderSearch(res, meta = {}) {
     `<div class="search-summary">共 ${res.count} 条 · 来源 ${esc(providerList(usedProviders))}${stats ? `（${esc(stats)}）` : ''}` +
     `${timeLabel ? ` · ${esc(timeLabel)}内` : ''}${res.sortBy === 'time' ? ' · 按时间排序' : ''} · 翻页 ${esc(String(meta.pages || 5))}` +
     `${res.cached ? ' · 缓存' : ''}</div>` +
-    (res.timeFallback ? `<div class="search-warn">⚠ ${esc((res.notes || []).find((n) => n.includes('没有新内容')) || '所选时间范围内没有新内容，展示的是最新结果')}</div>` : '') +
-    (res.timeDropped && !res.timeFallback ? `<div class="search-warn">⚠ 已按发布时间过滤掉 ${res.timeDropped} 条时间范围外的旧文</div>` : '') +
+    (res.timeFallback ? `<div class="search-warn">${esc((res.notes || []).find((n) => n.includes('没有新内容')) || '所选时间范围内没有新内容，展示的是最新结果')}</div>` : '') +
+    (res.timeDropped && !res.timeFallback ? `<div class="search-warn">已按发布时间过滤掉 ${res.timeDropped} 条时间范围外的旧文</div>` : '') +
     (res.results.length ? res.results.map(resultRow).join('') : '<div class="skeleton">没有结果</div>') +
     (canMore
       ? `<div style="display:flex;justify-content:center;margin:14px 0">
@@ -1988,7 +1997,7 @@ async function loadWatches() {
             <a href="${esc(h.url)}" target="_blank" rel="noreferrer">${esc(h.title)}</a>
             ${h.publishDate || h.date ? `<span class="when">${esc(h.publishDate || h.date)}</span>` : ''}
             <span class="when">${h.baseline ? '基线' : h.backfill ? '旧文补录' : h.isNew ? '新增' : fmtDate(h.foundAt || h.at)}</span>
-            ${typeof h.score === 'number' && h.isNew && !h.baseline ? `<span class="when" title="关键词/来源/新鲜度加权">★${h.score}</span>` : ''}
+            ${typeof h.score === 'number' && h.isNew && !h.baseline ? `<span class="when" title="按关键词、来源、新鲜度加权">评分 ${h.score}</span>` : ''}
             <button class="link-btn" data-convert="${esc(h.url)}" data-title="${esc(h.title)}">转换</button></div>`
           )
           .join('') || '<div class="hint">暂无命中</div>'}
@@ -2093,7 +2102,7 @@ function renderKbNoteList() {
       const open = filtering || kbBrowser.expanded.has(key);
       rows.push(
         `<div class="kb-row dir" data-dir="${esc(key)}" style="padding-left:${8 + depth * 14}px">
-          <span class="tw">${open ? '▾' : '▸'}</span><span class="dn">📁 ${esc(d.name)}</span><i>${kbCountAll(d)}</i>
+          <span class="tw">${open ? '▾' : '▸'}</span>${IC.folder}<span class="dn">${esc(d.name)}</span><i>${kbCountAll(d)}</i>
         </div>`
       );
       if (open) walk(d, depth + 1);
@@ -2101,7 +2110,7 @@ function renderKbNoteList() {
     for (const f of node.files) {
       rows.push(
         `<div class="kb-row file ${kbBrowser.current === f.path ? 'active' : ''}" data-path="${esc(f.path)}" title="${esc(f.path)}" style="padding-left:${8 + depth * 14 + 16}px">
-          <span class="fn">📄 ${esc(f.name)}</span><span class="when">${f.mtime ? new Date(f.mtime).toLocaleDateString('zh-CN') : ''}</span>
+          ${IC.file}<span class="fn">${esc(f.name)}</span><span class="when">${f.mtime ? new Date(f.mtime).toLocaleDateString('zh-CN') : ''}</span>
         </div>`
       );
     }
@@ -2330,7 +2339,7 @@ function renderKbReader() {
     // 去掉 YAML frontmatter；双链渲染成纯文本，嵌入图标注出来
     md = md.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
     md = md
-      .replace(/!\[\[([^\]]+)\]\]/g, '🖼 $1')
+      .replace(/!\[\[([^\]]+)\]\]/g, '（附件：$1）')
       .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
       .replace(/\[\[([^\]]+)\]\]/g, '$1');
     // 笔记里的相对路径图片（如 ![](img.png)）按笔记所在目录从知识库取：渲染前就改写 md，避免先发错误请求
@@ -2530,7 +2539,7 @@ async function loadKb() {
            <button class="btn sm" onclick="switchView('settings')">更换目标</button>
          </div>`
       : `<div class="card-head"><h3>${esc(kb.label)}</h3><span class="badge">未配置</span></div>
-         <p class="desc">${esc(kb.detail || '配置后，AI 整理结果会自动写入并建立链接。')}</p>
+         <p class="desc">${esc(kb.detail || '配置后，整理结果会写入此处并建立链接')}</p>
          <button class="btn sm primary" onclick="switchView('settings')">去设置</button>`;
 
     const notes = list.notes || [];
@@ -2538,14 +2547,14 @@ async function loadKb() {
     $('#vaultNotes').innerHTML = notes.length
       ? notes
           .map(
-            (n) => `<div class="note-item"><span>📄</span><span class="nm" title="${esc(n.path || '')}">${esc(n.name)}</span>
+            (n) => `<div class="note-item">${IC.file}<span class="nm" title="${esc(n.path || '')}">${esc(n.name)}</span>
                <span class="tm">${n.mtime ? new Date(n.mtime).toLocaleDateString('zh-CN') : ''}</span></div>`
           )
           .join('')
       : histRows.length
       ? histRows
           .map(
-            (h) => `<div class="note-item"><span>📝</span><span class="nm">${esc(h.title)}</span>
+            (h) => `<div class="note-item">${IC.file}<span class="nm">${esc(h.title)}</span>
                <span class="tm">${new Date(h.at).toLocaleDateString('zh-CN')}</span></div>`
           )
           .join('')
@@ -2555,7 +2564,7 @@ async function loadKb() {
       <div style="display:flex;flex-wrap:wrap;gap:6px">
         ${state.presets.map((p) => `<span class="badge" style="background:var(--brand-soft);color:#574fd6">${esc(p.label)}</span>`).join('')}
       </div>
-      <p class="hint" style="margin-top:10px">每次整理可在弹窗里选择模板、详细程度、是否生成概念笔记，并写自定义格式要求（会记住上次选择）。</p>`;
+      <p class="hint" style="margin-top:10px">每次整理时可选择模板、详细程度与是否生成概念笔记，并填写格式要求；选择会被记住</p>`;
   } catch (e) {
     $('#vaultNotes').innerHTML = `<div class="skeleton">${esc(e.message)}</div>`;
   }
@@ -2572,12 +2581,12 @@ function kbFieldsHtml(dest, s) {
     return `${f('Vault 路径', 'kbObsVault', s.obsidian?.vaultPath, 'D:/Notes/MyVault')}
       ${f('笔记子目录', 'kbObsFolder', s.obsidian?.folder || 'ArticleForge', 'ArticleForge')}
       <label class="mini-check"><input type="checkbox" id="kbObsConcepts" ${s.obsidian?.createConceptNotes !== false ? 'checked' : ''}> 自动创建概念笔记并双链</label>
-      <div class="hint">写入 vault 下子目录，带 YAML frontmatter、双链和 _索引.md。</div>`;
+      <div class="hint">写入 vault 下的子目录，包含 YAML frontmatter、双链与 _索引.md</div>`;
   }
   if (dest === 'logseq') {
     return `${f('Graph 路径', 'kbGraph', s.logseq?.graphPath, 'D:/Notes/logseq')}
       <label class="mini-check"><input type="checkbox" id="kbLogseqConcepts" ${s.logseq?.conceptPages !== false ? 'checked' : ''}> 每个概念建一页</label>
-      <div class="hint">写入 graph/pages，正文转成大纲块，页面属性用 key:: value。</div>`;
+      <div class="hint">写入 graph/pages，正文转为大纲块，页面属性使用 key:: value</div>`;
   }
   if (dest === 'siyuan') {
     const books = state.siyuanNotebooks || [];
@@ -2589,13 +2598,13 @@ function kbFieldsHtml(dest, s) {
           ${books.map((b) => `<option value="${esc(b.id)}" ${s.siyuan?.notebook === b.id ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}
           ${s.siyuan?.notebook && !books.some((b) => b.id === s.siyuan.notebook) ? `<option value="${esc(s.siyuan.notebook)}" selected>${esc(s.siyuan.notebookName || s.siyuan.notebook)}</option>` : ''}
         </select></div>
-      <div class="hint">「保存并测试」会自动拉取笔记本列表。</div>`;
+      <div class="hint">点击「保存并测试」后自动获取笔记本列表</div>`;
   }
   if (dest === 'notion') {
     return `${f('Integration Token', 'kbNoToken', s.notion?.token, 'secret_xxx')}
       ${f('数据库 ID', 'kbNoDb', s.notion?.databaseId, '32 位数据库 ID')}
       ${f('标题属性名', 'kbNoTitle', s.notion?.titleProp || 'Name', 'Name')}
-      <div class="hint">记得把 Integration 邀请进目标数据库（数据库右上角 ··· → 连接）。</div>`;
+      <div class="hint">需先在目标数据库中添加该 Integration（数据库右上角 ··· → 连接）</div>`;
   }
   return `${f('保存目录', 'kbDir', s.folder?.dir, 'D:/Notes/Inbox')}
     ${f('概念笔记子目录', 'kbConceptDir', s.folder?.conceptSubdir ?? '概念', '留空则不建概念笔记')}
@@ -2618,7 +2627,7 @@ async function loadSettings() {
   grid.innerHTML = `
     <div class="card">
       <h3>AI 模型</h3>
-      <p class="desc">OpenAI 兼容接口，推荐 DeepSeek / Kimi / 通义千问；本地 Ollama 填 http://localhost:11434/v1</p>
+      <p class="desc">OpenAI 兼容接口。本地 Ollama 请填写 http://localhost:11434/v1</p>
       <div class="field"><label>API 地址</label><input type="text" id="setBase" value="${esc(s.ai.baseUrl)}" placeholder="https://api.deepseek.com/v1"></div>
       <div class="field"><label>API Key</label><input type="password" id="setKey" value="${esc(s.ai.apiKey)}" placeholder="sk-..."></div>
       <div class="field-row">
@@ -2635,7 +2644,7 @@ async function loadSettings() {
 
     <div class="card">
       <h3>知识库</h3>
-      <p class="desc">整理结果写到哪个知识库由你选，不限 Obsidian。</p>
+      <p class="desc">AI 整理结果的写入位置</p>
       <div class="field"><label>写入目标</label>
         <select id="kbDest">
           ${(state.kbDestinations || []).map((d) => `<option value="${d.key}" ${s.kb?.destination === d.key ? 'selected' : ''}>${d.label}${d.kind === 'api' ? '（API）' : ''}</option>`).join('')}
@@ -2649,12 +2658,12 @@ async function loadSettings() {
         <button class="btn sm" id="testKb">保存并测试</button>
         <span class="hint" id="kbTestMsg" style="margin:0"></span>
       </div>
-      <div class="hint">当前：${kb.configured ? '✓ ' + esc(kb.detail || kb.target || '') : '未配置'}</div>
+      <div class="hint">当前：${kb.configured ? '已配置：' + esc(kb.detail || kb.target || '') : '未配置'}</div>
     </div>
 
     <div class="card">
       <h3>检索与监控</h3>
-      <p class="desc">公众号走「搜狗微信（最多 10 页）+ 百度 site:mp.weixin.qq.com」双源；网页走百度 / 360 / Bing 并行，失败自动熔断跳过。</p>
+      <p class="desc">公众号同时检索搜狗微信与百度（site:mp.weixin.qq.com）；网页并行检索百度、360、Bing，单个来源失败时自动跳过</p>
       <div class="field"><label>默认搜索源（网页侧首选）</label>
         <select id="setProvider">
           <option value="baidu" ${s.search.provider === 'baidu' ? 'selected' : ''}>百度（国内最稳，推荐）</option>
@@ -2695,7 +2704,7 @@ async function loadSettings() {
 
     <div class="card">
       <h3>渲染内核</h3>
-      <p class="desc">使用本机 Chrome / Edge 无头渲染与打印 PDF，不额外下载浏览器。</p>
+      <p class="desc">使用本机已安装的 Chrome 或 Edge 渲染页面并生成 PDF</p>
       <div class="field"><label>浏览器路径（留空自动探测）</label><input type="text" id="setBrowser" value="${esc(s.browser.executablePath)}" placeholder="${esc(browser || '未找到')}"></div>
       <label class="mini-check"><input type="checkbox" id="setHeadless" ${s.browser.headless !== false ? 'checked' : ''}> 无头模式</label>
       <div class="hint">当前：${esc(browser || '未找到，请手动指定')}</div>
@@ -2704,7 +2713,7 @@ async function loadSettings() {
 
     <div class="card">
       <h3>个性化背景</h3>
-      <p class="desc">上传一张照片当应用背景，下面所有参数拖动即时生效；图片只保存在本机数据目录。</p>
+      <p class="desc">上传图片作为应用背景，调整参数即时生效；图片仅保存在本机数据目录</p>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="btn sm" id="bgUploadBtn">上传背景图片</button>
         <input type="file" id="bgFile" accept="image/*" hidden>
@@ -2910,11 +2919,11 @@ async function loadSettings() {
         if (cur) $('#kbSyNotebook').value = cur;
       }
       msg.innerHTML = r.ok
-        ? `<span style="color:var(--green)">✓ ${esc(r.message)}</span>`
-        : `<span style="color:var(--red)">✕ ${esc(r.message)}</span>`;
+        ? `<span style="color:var(--green)">${esc(r.message)}</span>`
+        : `<span style="color:var(--red)">${esc(r.message)}</span>`;
       toast(r.ok ? r.message : r.message, r.ok ? 'ok' : 'err', 5000);
     } catch (e) {
-      msg.innerHTML = `<span style="color:var(--red)">✕ ${esc(e.message)}</span>`;
+      msg.innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`;
     } finally {
       btn.disabled = false;
     }
@@ -3036,7 +3045,7 @@ function renderTodos() {
     return;
   }
   board.innerHTML =
-    '<div class="board-hint">便签不关在这里 —— 可以拖到窗口任意位置，切到别的页面它们也一直留着；<br>固定后位置不会再变，右上角的眼睛按钮可以隐藏 / 显示便签</div>';
+    '<div class="board-hint">便签可拖到窗口任意位置，切换页面后仍然显示<br>右上角的眼睛按钮可隐藏或显示全部便签</div>';
   const measured = measureBoard();
   const rect = measured || lastBoardRect || { left: 90, top: 150, width: 860, height: 520 };
   // 布局顺序：固定在前，未完成在中（新的在前），已完成垫底
@@ -3063,13 +3072,13 @@ function renderTodos() {
       const c = clampNotePos(vp);
       return `<div class="todo-note c-${esc(t.color || 'amber')} ${t.done ? 'done' : ''} ${t.pinned ? 'pinned' : ''}" data-id="${t.id}" data-vx="${Math.round(vp.x)}" data-vy="${Math.round(vp.y)}" style="left:${Math.round(c.x)}px;top:${Math.round(c.y)}px">
         <div class="todo-head">
-          <button class="t-pin" title="${t.pinned ? '取消固定（恢复可拖动）' : '固定位置，防止误拖'}">${t.pinned ? '📌' : '📍'}</button>
+          <button class="t-pin" title="${t.pinned ? '取消固定（恢复可拖动）' : '固定位置，防止误拖'}">${t.pinned ? IC.pinOn : IC.pin}</button>
           <span class="t-date">${t.createdAt ? new Date(t.createdAt).toLocaleDateString('zh-CN') : ''}</span>
           <button class="t-del" title="删除">×</button>
         </div>
         <div class="t-text" title="双击编辑内容">${esc(t.text)}</div>
         <div class="todo-foot">
-          ${t.done ? '<button class="t-reopen" title="还没做完，恢复到待办">↩ 没做完</button>' : '<button class="t-done" title="这件事做完了">✓ 完成</button>'}
+          ${t.done ? '<button class="t-reopen" title="恢复为未完成">恢复</button>' : '<button class="t-done" title="标记为已完成">完成</button>'}
         </div>
       </div>`;
     })
@@ -3152,13 +3161,13 @@ function bindTodoDrag(el, t) {
 async function addTodo() {
   const input = $('#todoInput');
   const text = input.value.trim();
-  if (!text) return toast('先写点内容', 'err');
+  if (!text) return toast('请输入便签内容', 'err');
   input.value = '';
   try {
     const { todo } = await api('/api/todos', { method: 'POST', body: { text } });
     state.todos = [todo, ...(state.todos || [])];
     renderTodos();
-    toast('记下了，做完记得回来打勾', 'ok');
+    toast('便签已添加', 'ok');
   } catch (e) {
     toast(e.message, 'err');
   }
@@ -3254,7 +3263,7 @@ function switchView(view) {
 
   if (view === 'search' && !$('#searchResults').dataset.touched) {
     $('#searchResults').innerHTML =
-      '<div class="empty-hint">输入关键词后回车，或试试这些方向：<div class="hint-chips"><button data-q="内存取证 教程">内存取证 教程</button><button data-q="Volatility 命令">Volatility 命令</button><button data-q="CTF 逆向 入门">CTF 逆向 入门</button></div></div>';
+      '<div class="empty-hint">输入关键词后按回车检索<div class="hint-chips"><button data-q="内存取证 教程">内存取证 教程</button><button data-q="Volatility 命令">Volatility 命令</button><button data-q="CTF 逆向 入门">CTF 逆向 入门</button></div></div>';
     $$('#searchResults .hint-chips button').forEach((b) => {
       b.onclick = () => {
         $('#searchInput').value = b.dataset.q;
@@ -3432,7 +3441,7 @@ function bind() {
       try {
         await api(`/api/todos/${t.id}`, { method: 'PATCH', body: { done: t.done } });
         renderTodos();
-        if (t.done) toast('完成一件，舒服', 'ok', 1600);
+        if (t.done) toast('已标记为完成', 'ok', 1600);
       } catch (err) {
         toast(err.message, 'err');
       }
@@ -3526,7 +3535,7 @@ function bind() {
   };
   $('#readerOutline').onclick = () => {
     const open = $('#readerToc').hidden;
-    if (open && !($('#readerToc')._count > 0)) return toast('这篇没有识别出标题');
+    if (open && !($('#readerToc')._count > 0)) return toast('未识别到标题');
     setReaderOutline(open);
   };
   window.afConvertUrl = (url, title = '') => {
@@ -3658,7 +3667,7 @@ async function init() {
     if (st.version) document.title = `ArticleForge v${st.version} · 文章转换与知识沉淀`;
     $('#aiHint').textContent = st.ai.ready ? st.ai.model : 'AI 未配置，去设置';
     if (!st.ai.ready) {
-      setTimeout(() => toast('AI 功能未配置：到「设置」填入 API 地址与密钥后即可划词提问与知识整理', 'info', 7000), 1200);
+      setTimeout(() => toast('AI 尚未配置。在「设置」中填写 API 地址与密钥后，可使用提问与知识整理', 'info', 7000), 1200);
     }
   } catch (e) {
     toast(e.message, 'err');

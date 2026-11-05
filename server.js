@@ -55,7 +55,7 @@ app.get('/api/status', (req, res) => {
     counts: { articles: listArticles().length, watches: watchStore.list().length },
     presets: Object.entries(FORMAT_PRESETS).map(([key, v]) => ({ key, ...v })),
     ui: s.ui || {},
-    version: '1.0.10',
+    version: '1.1.0',
   });
 });
 

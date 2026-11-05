@@ -18,7 +18,7 @@ export default {
   key: 'folder',
   label: 'Markdown 目录',
   kind: 'file',
-  desc: '任意目录存纯 Markdown，兼容任何基于文件的知识库（Joplin / Trilium / 坚果云 / Git 仓库）',
+  desc: '以纯 Markdown 写入任意目录，适用于 Joplin、Trilium、坚果云、Git 仓库等基于文件的知识库',
 
   status() {
     const i = info();

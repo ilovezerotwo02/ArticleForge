@@ -3,17 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ArticleForge · 文章转换与知识沉淀</title>
+<title>ArticleForge</title>
 <link rel="stylesheet" href="/vendor/katex/katex.min.css">
 <link rel="stylesheet" href="/styles.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%234f46e5'/><path d='M28 72V28h20c12 0 19 6 19 15 0 6-3 11-9 13 7 2 11 7 11 14 0 10-8 17-21 17H28zm12-9h10c6 0 9-3 9-8s-3-8-9-8H40v16zm0-25h8c5 0 8-2 8-7s-3-7-8-7h-8v14z' fill='white'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%231c1b19'/><rect x='25' y='19' width='50' height='62' rx='3' fill='%23f4f1ea'/><rect x='32' y='30' width='20' height='4.5' rx='1.5' fill='%231c1b19'/><g fill='%23cfc9bd'><rect x='32' y='42' width='25' height='3' rx='1.5'/><rect x='32' y='51' width='36' height='3' rx='1.5'/><rect x='32' y='60' width='30' height='3' rx='1.5'/><rect x='32' y='69' width='22' height='3' rx='1.5'/></g><path d='M59 19h8.5v22l-4.25-4.25L59 41z' fill='%23b42318'/></svg>">
 </head>
 <body>
 <div class="bg-layer" id="bgLayer" hidden></div>
 <!-- 自绘顶栏：待办、左右两栏收起按钮都在最上面；桌面版右侧让出系统窗口按钮 -->
 <header class="titlebar" id="titlebar">
   <div class="tb-group">
-    <div class="tb-logo" title="ArticleForge">AF</div>
+    <div class="tb-logo" title="ArticleForge"><svg class="af-mark" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="#1c1b19"/><rect x="25" y="19" width="50" height="62" rx="3" fill="#f4f1ea"/><rect x="32" y="30" width="20" height="4.5" rx="1.5" fill="#1c1b19"/><g fill="#cfc9bd"><rect x="32" y="42" width="25" height="3" rx="1.5"/><rect x="32" y="51" width="36" height="3" rx="1.5"/><rect x="32" y="60" width="30" height="3" rx="1.5"/><rect x="32" y="69" width="22" height="3" rx="1.5"/></g><path d="M59 19h8.5v22l-4.25-4.25L59 41z" fill="#b42318"/></svg></div>
     <button class="tb-btn" id="tbMenu" title="菜单（文件 / 视图 / 帮助）">
       <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg>
     </button>
@@ -70,11 +70,11 @@
       </div>
     </div>
     <div class="url-box">
-      <input id="urlInput" type="text" placeholder="粘贴微信 / 网页文章链接…" spellcheck="false">
+      <input id="urlInput" type="text" placeholder="文章链接" spellcheck="false">
       <button class="btn primary" id="fetchBtn">抓取</button>
     </div>
     <div class="url-actions">
-      <label class="mini-check"><input type="checkbox" id="forceRender"> 强制浏览器渲染（SPA / 反爬页）</label>
+      <label class="mini-check"><input type="checkbox" id="forceRender">使用浏览器渲染（适用于动态页面）</label>
       <button class="link-btn" id="uploadBtn">
         <svg viewBox="0 0 24 24"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 17v3h16v-3"/></svg>
         上传 DOCX / MD / PDF
@@ -82,7 +82,7 @@
       <input type="file" id="fileInput" multiple accept=".docx,.md,.markdown,.pdf,.txt,.html" hidden>
     </div>
     <div class="list-search">
-      <input id="libFilter" type="text" placeholder="筛选标题 / 公众号…">
+      <input id="libFilter" type="text" placeholder="筛选">
     </div>
     <div class="tag-filter" id="tagFilterBar" hidden></div>
     <div class="article-list" id="articleList"></div>
@@ -93,7 +93,7 @@
     <!-- 应用内阅读：检索结果 / 相关文章先在本软件里看，满意再收入资料库 -->
     <div class="reader" id="reader" hidden>
       <div class="reader-head">
-        <button class="btn sm ghost" id="readerClose" title="返回（Esc）">← 返回</button>
+        <button class="btn sm ghost" id="readerClose" title="返回（Esc）">返回</button>
         <div class="reader-title" id="readerTitle">加载中…</div>
         <button class="btn sm" id="readerOutline" title="显示 / 隐藏标题大纲">大纲</button>
         <button class="btn sm" id="readerWeb" title="在本软件窗口里打开网页原样">网页原样</button>
@@ -118,21 +118,27 @@
       <button class="tab" data-tab="outline">大纲结构</button>
       <button class="tab" data-tab="related">相关文章</button>
       <div class="tabs-spacer"></div>
-      <span class="zoom-hint">在正文中选中文字即可划词提问</span>
-      <button class="tab outline-toggle" id="outlineToggle" title="显示 / 隐藏右侧标题大纲（Obsidian 式）">
+      <span class="zoom-hint">选中正文可提问</span>
+      <button class="tab outline-toggle" id="outlineToggle" title="显示 / 隐藏标题大纲">
         <svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M8 12h12"/><path d="M12 18h8"/></svg> 大纲
       </button>
     </div>
 
     <section class="view" id="viewConvert">
       <div class="empty" id="emptyState">
-        <div class="empty-art">
-          <svg viewBox="0 0 120 120"><rect x="18" y="14" width="62" height="80" rx="8" fill="#eef2ff" stroke="#c7d2fe"/><path d="M30 34h38M30 46h38M30 58h26" stroke="#a5b4fc" stroke-width="3" stroke-linecap="round"/><circle cx="82" cy="82" r="22" fill="#4f46e5"/><path d="M82 72v20M72 82h20" stroke="#fff" stroke-width="4" stroke-linecap="round"/></svg>
+        <div class="empty-sheet" aria-hidden="true">
+          <div class="es-title">Volatility 3 内存取证：从镜像到进程树</div>
+          <div class="es-meta">微信公众号 · 2026-10-28 · 3,842 字 · 6 张图</div>
+          <div class="es-h2">一、识别镜像的系统版本</div>
+          <p class="es-p">分析前先确认镜像对应的操作系统与内核版本，后续插件依赖这一步得到的符号表。</p>
+          <div class="es-code"><span>$</span> vol -f memdump.raw windows.info</div>
         </div>
-        <h2>把任意文章，变成可归档的知识</h2>
-        <p>粘贴微信链接自动重建标题层级与代码框，或上传 DOCX / MD / PDF，交给 AI 按你的格式整理并写入你的知识库。</p>
-        <div class="empty-tips">
-          <span>✓ 正文/图片/排版完整保留</span><span>✓ PDF · DOCX · MD</span><span>✓ 划词提问</span><span>✓ 全网检索与监控</span>
+        <h2>还没有打开文章</h2>
+        <p>在左侧粘贴微信公众号或网页文章链接，或上传 DOCX、Markdown、PDF。正文会按原有层级重新排版，代码块与图片完整保留</p>
+        <div class="empty-steps">
+          <div><b>01</b>粘贴链接或上传文件</div>
+          <div><b>02</b>阅读、划词提问、导出 PDF / DOCX / MD</div>
+          <div><b>03</b>整理要点，写入知识库</div>
         </div>
       </div>
       <div class="preview-wrap" id="previewWrap" hidden>
@@ -150,7 +156,7 @@
         <div class="outline-view" id="outlineView" hidden></div>
         <div class="related-view" id="relatedView" hidden>
           <div class="rel-bar">
-            <input id="relQuery" type="text" placeholder="检索词（留空 = 按标题 / 标签自动生成）">
+            <input id="relQuery" type="text" placeholder="检索词，留空则按标题生成">
             <select id="relSource" title="来源">
               <option value="web" selected>网页（快）</option>
               <option value="wechat">微信公众号</option>
@@ -181,10 +187,10 @@
     <section class="view" id="viewSearch" hidden>
       <div class="page-head">
         <h1>全网检索</h1>
-        <p>按关键词搜索微信/网页文章，一键抓取转换后进入资料库。</p>
+        <p>按关键词检索公众号与网页文章，结果可直接转换并收入资料库</p>
       </div>
       <div class="search-bar">
-        <input id="searchInput" type="text" placeholder="例如：内存取证 volatility 教程">
+        <input id="searchInput" type="text" placeholder="关键词">
         <select id="searchSource">
           <option value="all" selected>全部来源</option>
           <option value="wechat">微信公众号</option>
@@ -217,10 +223,10 @@
     <section class="view" id="viewWatch" hidden>
       <div class="page-head">
         <h1>内容监控</h1>
-        <p>定时检索关键词，发现新文章立即提醒；一键把新内容收进资料库。</p>
+        <p>按设定间隔检索关键词，出现新文章时提醒，可直接收入资料库</p>
       </div>
       <div class="search-bar">
-        <input id="watchInput" type="text" placeholder="监控关键词，如：内存取证 靶场">
+        <input id="watchInput" type="text" placeholder="监控关键词">
         <select id="watchInterval">
           <option value="15">每 15 分钟</option>
           <option value="30" selected>每 30 分钟</option>
@@ -256,15 +262,15 @@
     <section class="view" id="viewTodo" hidden>
       <div class="page-head">
         <h1>待办便签</h1>
-        <p>记下没完成的事：便签可以拖到窗口任意位置（切到别的页面也一直显示），📌固定后不怕误拖，做完打勾归档。</p>
+        <p>便签可拖到窗口任意位置，切换页面后仍然显示；固定后位置不再改变</p>
       </div>
       <div class="todo-bar">
-        <input id="todoInput" type="text" placeholder="记一件没完成的事…（回车添加）" maxlength="200">
+        <input id="todoInput" type="text" placeholder="新便签，按回车添加" maxlength="200">
         <button class="btn primary" id="addTodoBtn">添加便签</button>
         <button class="btn ghost" id="toggleNotesBtn" title="隐藏后便签只在待办页显示，其它页面不再漂浮">隐藏便签</button>
         <button class="btn ghost" id="clearDoneTodo" title="删除所有已打勾的便签">清空已完成</button>
       </div>
-      <div class="todo-board" id="todoBoard"><div class="skeleton" id="todoEmpty">还没有便签，在上面输入第一件没完成的事吧</div></div>
+      <div class="todo-board" id="todoBoard"><div class="skeleton" id="todoEmpty">暂无便签</div></div>
     </section>
 
     <section class="view" id="viewKnowledge" hidden>
@@ -299,7 +305,7 @@
     <section class="view" id="viewSettings" hidden>
       <div class="page-head">
         <h1>设置</h1>
-        <p>AI 走 OpenAI 兼容协议，DeepSeek / Kimi / 通义 / OpenAI / 本地 Ollama 均可。<span id="afVersion" style="color:var(--brand);font-weight:600"></span></p>
+        <p>AI 使用 OpenAI 兼容接口，支持 DeepSeek、Kimi、通义千问、OpenAI 与本地 Ollama <span id="afVersion" style="font-family:var(--font-mono);color:var(--ink-4);margin-left:8px"></span></p>
       </div>
       <div class="settings-grid" id="settingsGrid"></div>
     </section>
@@ -309,7 +315,7 @@
   <aside class="ai-pane" id="aiPane">
     <div class="ai-head">
       <div class="ai-title">
-        <span class="ai-dot" id="aiDot"></span> AI 阅读助手
+        <span class="ai-dot" id="aiDot"></span> 阅读助手
         <span class="ai-model" id="aiModel">未配置</span>
       </div>
       <button class="icon-btn" id="clearChat" title="清空对话">
@@ -329,13 +335,13 @@
         <div class="ctx-label"><span id="ctxLabel">引用选中内容</span><button class="ctx-close" id="ctxClose" title="移除引用">×</button></div>
         <div class="ctx-text" id="ctxText"></div>
       </div>
-      <textarea id="composer" rows="1" placeholder="就这篇文章提问…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <textarea id="composer" rows="1" placeholder="提问，Enter 发送"></textarea>
       <button class="send-btn" id="sendBtn" title="发送">
         <svg viewBox="0 0 24 24"><path d="M4 12 20 4l-6 16-3-7z"/></svg>
       </button>
     </div>
     <div class="ai-foot">
-      <button class="ghost-btn" id="organizeBtn">AI 整理并入库</button>
+      <button class="ghost-btn" id="organizeBtn">整理并写入知识库</button>
       <span class="ai-hint" id="aiHint">未打开文章</span>
     </div>
   </aside>

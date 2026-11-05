@@ -4,7 +4,7 @@
  * - 数据写到 %APPDATA%/ArticleForge/data，不污染安装目录
  * - 监控命中走系统通知，外链走系统浏览器，托盘常驻
  */
-const { app, BrowserWindow, Menu, Tray, shell, nativeImage, Notification, dialog, screen } = require('electron');
+const { app, BrowserWindow, Menu, Tray, shell, nativeImage, Notification, dialog, screen, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const net = require('node:net');
@@ -14,6 +14,7 @@ const ROOT = path.join(__dirname, '..');
 const SHOT = process.env.AF_SHOT || '';
 
 let win = null;
+const TITLEBAR_H = 38;
 let tray = null;
 let serverPort = 0;
 
@@ -140,10 +141,14 @@ function createWindow() {
     icon: path.join(ROOT, 'build', 'icon.png'),
     autoHideMenuBar: true,
     show: false,
+    // 隐藏系统标题栏，由页面自绘顶栏（待办 / 两侧收起按钮在最上面），右上角保留系统窗口按钮
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#00000000', symbolColor: '#4b5563', height: TITLEBAR_H },
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: false,
+      preload: path.join(__dirname, 'preload.cjs'),
     },
   });
 
@@ -181,6 +186,59 @@ function createWindow() {
     win = null;
   });
 }
+
+/* ---------------- 页面 ↔ 主进程：顶栏菜单、应用内网页窗口 ---------------- */
+
+ipcMain.on('af:menu', (e, pos) => {
+  const menu = Menu.getApplicationMenu();
+  if (!menu || !win) return;
+  menu.popup({ window: win, x: Math.round(pos?.x || 12), y: Math.round(pos?.y || TITLEBAR_H) });
+});
+
+ipcMain.on('af:overlay', (e, opt) => {
+  try {
+    if (win && opt) win.setTitleBarOverlay({ color: opt.color || '#00000000', symbolColor: opt.symbol || '#4b5563' });
+  } catch {}
+});
+
+/** 在本软件里直接打开网页原样（不跳系统浏览器）：独立子窗口，带返回/前进/外部打开 */
+function openInAppWindow(url) {
+  if (!/^https?:\/\//i.test(String(url || ''))) return;
+  const child = new BrowserWindow({
+    width: Math.min(1280, (win && win.getBounds().width) || 1200),
+    height: Math.min(900, (win && win.getBounds().height) || 860),
+    parent: undefined,
+    title: '网页查看 · ArticleForge',
+    icon: path.join(ROOT, 'build', 'icon.png'),
+    autoHideMenuBar: true,
+    backgroundColor: '#ffffff',
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
+  });
+  child.setMenu(
+    Menu.buildFromTemplate([
+      { label: '← 后退', accelerator: 'Alt+Left', click: () => child.webContents.navigationHistory?.canGoBack() && child.webContents.navigationHistory.goBack() },
+      { label: '前进 →', accelerator: 'Alt+Right', click: () => child.webContents.navigationHistory?.canGoForward() && child.webContents.navigationHistory.goForward() },
+      { label: '刷新', accelerator: 'F5', click: () => child.webContents.reload() },
+      { label: '在系统浏览器打开', click: () => shell.openExternal(child.webContents.getURL()) },
+      { label: '收入资料库', click: () => {
+          const u = child.webContents.getURL();
+          if (win) {
+            win.show();
+            win.webContents.executeJavaScript(`window.afConvertUrl && window.afConvertUrl(${JSON.stringify(u)})`).catch(() => {});
+          }
+        } },
+    ])
+  );
+  child.setMenuBarVisibility(true);
+  child.webContents.setWindowOpenHandler(({ url: u }) => {
+    if (/^https?:\/\//.test(u)) child.loadURL(u);
+    return { action: 'deny' };
+  });
+  child.webContents.on('page-title-updated', (e, t) => child.setTitle(`${t} · 网页查看`));
+  child.loadURL(url);
+}
+
+ipcMain.on('af:open-in-app', (e, url) => openInAppWindow(url));
 
 function createMenu() {
   const dataDir = process.env.AF_DATA_DIR;

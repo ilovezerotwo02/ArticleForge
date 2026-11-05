@@ -115,9 +115,9 @@
 
 ## 安装
 
-**方式一 · 安装版（推荐）**：到 [Releases](https://github.com/ilovezerotwo02/ArticleForge/releases/latest) 下载 `ArticleForge-1.0.6-setup.exe` 双击安装，桌面快捷方式直接可用。
+**方式一 · 安装版（推荐）**：到 [Releases](https://github.com/ilovezerotwo02/ArticleForge/releases/latest) 下载 `ArticleForge-1.0.7-setup.exe` 双击安装，桌面快捷方式直接可用。
 
-**方式二 · 便携版**：下载 `ArticleForge-1.0.6-portable.exe` 双击即用，无需安装。
+**方式二 · 便携版**：下载 `ArticleForge-1.0.7-portable.exe` 双击即用，无需安装。
 
 - 数据全部存在 `%APPDATA%\articleforge\data`，卸载时删掉 exe 和这个目录即可
 - 安装包未做代码签名，首次运行若被 SmartScreen 拦截，点「更多信息 → 仍要运行」即可（完全开源，可自行审查或从源码运行）
@@ -148,7 +148,7 @@ npm run app
 npm run vendor
 npm run icon        # 重新生成图标（改过 build/icon.png 时）
 npm run build:dir   # 绿色版目录 → release/win-unpacked
-npm run build       # 单文件便携版 → release/ArticleForge-1.0.6-portable.exe
+npm run build       # 单文件便携版 → release/ArticleForge-1.0.7-portable.exe
 ```
 
 ## 快速上手

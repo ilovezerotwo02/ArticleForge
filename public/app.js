@@ -19,6 +19,8 @@ const state = {
   todos: [],
   // 两侧面板收起状态（Obsidian 式），记忆在 localStorage
   panels: { list: true, ai: true },
+  // 标题大纲（Obsidian 式）是否展开，排版预览 / 应用内阅读 / 知识库共用
+  outlineOpen: localStorage.getItem('af.outline') !== '0',
   organizeSpec: JSON.parse(localStorage.getItem('af.organizeSpec') || 'null') || {
     preset: 'study',
     detail: 'normal',
@@ -479,6 +481,8 @@ async function openArticle(id) {
     const { article } = await api(`/api/articles/${id}`);
     state.current = article;
     state.tab = 'preview';
+    $('#relQuery').value = '';
+    $('#relResults').innerHTML = '';
     $('#emptyState').hidden = true;
     $('#previewWrap').hidden = false;
     $('#viewTabs').hidden = false;
@@ -501,13 +505,141 @@ function renderTopActions() {
     ${utags.length ? `<span class="top-tags">${utags.map((t) => `<span class="a-tag ${t === '未完成' ? 'todo' : ''}">${esc(t)}</span>`).join('')}</span>` : ''}
     <button class="btn sm" id="btnTags" title="编辑这篇文章的标签">🏷 标签</button>
     <button class="btn sm" id="btnExport">导出 PDF · DOCX · MD</button>
-    ${a.url ? `<a class="btn sm ghost" href="${esc(a.url)}" target="_blank" rel="noreferrer">打开原文</a>` : ''}
+    ${a.url ? `<button class="btn sm ghost" id="btnOrigin" title="查看原网页：本软件内 / 浏览器">原网页 ▾</button>` : ''}
   `;
+  const origin = $('#btnOrigin');
+  if (origin) {
+    origin.onclick = async () => {
+      const url = a.finalUrl || a.url;
+      showPop(origin, [{ group: '查看原网页' }, { label: '在本软件里打开', hint: '应用内窗口', run: () => openWebInApp(url) }, 'hr', ...(await browserItems(url))]);
+    };
+  }
   $('#btnTags').onclick = () => openTagEditor(a.id);
   $('#btnExport').onclick = openExportModal;
 }
 
-/** 预览加载完检测：内容空白时给出提示与重试入口；自定义背景时把正文背景改透明 */
+/* ---------------- Obsidian 式标题大纲（排版预览 / 应用内阅读 / 知识库共用） ---------------- */
+
+const OT_CHEV = '<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>';
+const OT_FOLD = '<svg viewBox="0 0 24 24"><path d="m7 15 5-5 5 5"/><path d="m7 20 5-5 5 5" opacity=".5"/></svg>';
+
+/** heads: [{id, level, text}]，按层级组装成可折叠的树，带竖向缩进引导线 */
+function renderOutline(box, heads, { onJump, onClose, title = '大纲' } = {}) {
+  const root = { kids: [] };
+  const stack = [{ level: 0, node: root }];
+  for (const h of heads) {
+    const node = { h, kids: [] };
+    while (stack.length > 1 && stack[stack.length - 1].level >= h.level) stack.pop();
+    stack[stack.length - 1].node.kids.push(node);
+    stack.push({ level: h.level, node });
+  }
+  const html = (nodes, top) =>
+    nodes
+      .map(
+        (n) => `<div class="ot-node ${top ? 'lv-top' : ''}">
+          <div class="ot-row" data-h="${esc(n.h.id)}" title="${esc(n.h.text)}">
+            <span class="ot-tw" ${n.kids.length ? 'data-tw="1"' : 'style="visibility:hidden"'}>${OT_CHEV}</span>
+            <span class="ot-text">${esc(n.h.text)}</span>
+          </div>
+          ${n.kids.length ? `<div class="ot-kids">${html(n.kids, false)}</div>` : ''}
+        </div>`
+      )
+      .join('');
+  box.innerHTML = `<div class="ot-head">
+      <span class="ot-title">${esc(title)}<span class="ot-n">${heads.length}</span></span>
+      <button data-ot="fold" title="全部折叠 / 全部展开">${OT_FOLD}</button>
+      ${onClose ? '<button data-ot="close" title="收起大纲">×</button>' : ''}
+    </div>
+    <div class="ot-body">${heads.length ? html(root.kids, true) : '<div class="ot-empty">这篇没有识别出标题</div>'}</div>`;
+  box.onclick = (e) => {
+    if (e.target.closest('[data-ot="close"]')) return onClose && onClose();
+    if (e.target.closest('[data-ot="fold"]')) {
+      const parents = $$('.ot-node', box).filter((n) => n.querySelector(':scope > .ot-kids'));
+      const anyOpen = parents.some((n) => !n.classList.contains('collapsed'));
+      parents.forEach((n) => n.classList.toggle('collapsed', anyOpen));
+      return;
+    }
+    const tw = e.target.closest('[data-tw]');
+    if (tw) return tw.closest('.ot-node').classList.toggle('collapsed');
+    const row = e.target.closest('.ot-row');
+    if (row) {
+      setOutlineActive(box, row.dataset.h);
+      onJump && onJump(row.dataset.h);
+    }
+  };
+}
+
+/** 高亮当前小节：被折叠的父级自动展开，并把高亮行滚进可视区 */
+function setOutlineActive(box, id) {
+  let act = null;
+  $$('.ot-row', box).forEach((r) => {
+    const on = r.dataset.h === id;
+    r.classList.toggle('active', on);
+    if (on) act = r;
+  });
+  if (!act || box._lastActive === id) return;
+  box._lastActive = id;
+  const body = box.querySelector('.ot-body');
+  const rb = act.getBoundingClientRect();
+  const bb = body.getBoundingClientRect();
+  if (rb.top < bb.top + 6 || rb.bottom > bb.bottom - 6) body.scrollTop += rb.top - bb.top - bb.height / 2;
+}
+
+/** 给 iframe 里的阅读页挂大纲：提取 h1~h4、点击跳转、滚动跟随高亮。返回标题数 */
+function bindFrameOutline(frame, box, opts = {}) {
+  let d;
+  try {
+    d = frame.contentDocument;
+  } catch {
+    return 0;
+  }
+  if (!d) return 0;
+  const els = $$('.af-content h1, .af-content h2, .af-content h3, .af-content h4', d).filter((h) => h.textContent.trim());
+  els.forEach((h, i) => {
+    if (!h.id) h.id = `afh-${i}`;
+  });
+  const heads = els.map((h) => ({ id: h.id, level: Number(h.tagName[1]), text: h.textContent.trim().replace(/\s+/g, ' ') }));
+  box._lastActive = '';
+  renderOutline(box, heads, {
+    ...opts,
+    onJump: (id) => d.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+  });
+  let raf = 0;
+  const spy = () => {
+    raf = 0;
+    let cur = heads[0]?.id;
+    for (const h of els) {
+      if (h.getBoundingClientRect().top <= 90) cur = h.id;
+      else break;
+    }
+    if (cur) setOutlineActive(box, cur);
+  };
+  frame.contentWindow.addEventListener('scroll', () => raf || (raf = requestAnimationFrame(spy)), { passive: true });
+  spy();
+  return heads.length;
+}
+
+const hasBg = () => document.body.classList.contains('has-bg');
+const previewQuery = () => `embed=1${hasBg() ? '&bg=1' : ''}&t=${Date.now()}`;
+
+/** 排版预览右侧大纲：开关记在 localStorage，没识别出标题时自动隐藏 */
+function applyDocOutline() {
+  const box = $('#docOutline');
+  const n = box._count || 0;
+  box.hidden = !(state.tab === 'preview' && state.outlineOpen && n > 0);
+  $('#outlineToggle').classList.toggle('on', state.outlineOpen);
+  $('#outlineToggle').hidden = state.tab !== 'preview';
+}
+
+function setDocOutlineOpen(open) {
+  state.outlineOpen = open;
+  try {
+    localStorage.setItem('af.outline', open ? '1' : '0');
+  } catch {}
+  applyDocOutline();
+}
+
+/** 预览加载完：内容空白时给出提示与重试入口；挂上 Obsidian 式大纲 */
 function onPreviewLoad() {
   const frame = $('#previewFrame');
   setTimeout(() => {
@@ -518,23 +650,157 @@ function onPreviewLoad() {
       const textLen = content ? content.textContent.trim().length : 0;
       const media = content ? content.querySelectorAll('img, pre, table, ul, ol, blockquote').length : 0;
       empty = !content || (textLen < 40 && media === 0);
-      // 半透明主题：预览文档与本应用同源，直接注入透明化样式
-      if (document.body.classList.contains('has-bg') && d && d.head && !d.getElementById('af-translucent')) {
-        const st = d.createElement('style');
-        st.id = 'af-translucent';
-        st.textContent =
-          'html,body{background:transparent !important}' +
-          '.af-toc{background:rgba(255,255,255,.62) !important}' +
-          '.af-stats span{background:rgba(255,255,255,.62) !important}' +
-          'pre{background:rgba(255,255,255,.66) !important}' +
-          'code{background:rgba(255,255,255,.6) !important}';
-        d.head.appendChild(st);
-      }
     } catch {}
+    const box = $('#docOutline');
+    box._count = bindFrameOutline(frame, box, { onClose: () => setDocOutlineOpen(false) });
+    applyDocOutline();
     $('#previewEmpty').hidden = !empty;
     const tab = $('#openPreviewTab');
-    if (tab) tab.href = frame.src;
-  }, 300);
+    if (tab && state.current) tab.href = `/api/articles/${state.current.id}/preview`;
+  }, 120);
+}
+
+/* ---------------- 查看方式：本软件阅读 / 本软件网页原样 / 浏览器 ---------------- */
+
+let openAppsCache = null;
+async function openApps() {
+  if (!openAppsCache) {
+    openAppsCache = await api('/api/open-with/apps').catch(() => ({ url: [{ id: 'default', label: '系统默认浏览器' }], file: [{ id: 'default', label: '系统默认软件' }] }));
+  }
+  return openAppsCache;
+}
+
+function closePop() {
+  $('#popMenu').hidden = true;
+}
+
+/** 在锚点下方弹出菜单；items: {label, hint, run} | 'hr' | {group} */
+function showPop(anchor, items) {
+  const m = $('#popMenu');
+  m.innerHTML = items
+    .map((it, i) => (it === 'hr' ? '<hr>' : it.group ? `<div class="pm-label">${esc(it.group)}</div>` : `<button data-i="${i}">${esc(it.label)}${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</button>`))
+    .join('');
+  m.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  const w = m.offsetWidth;
+  const h = m.offsetHeight;
+  m.style.left = `${Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8))}px`;
+  m.style.top = `${r.bottom + h + 6 > window.innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4}px`;
+  m.onclick = (e) => {
+    const b = e.target.closest('[data-i]');
+    if (!b) return;
+    closePop();
+    items[Number(b.dataset.i)].run();
+  };
+}
+
+/** 网页原样在本软件里打开（桌面版是应用内窗口；纯浏览器模式退化成新标签） */
+function openWebInApp(url) {
+  if (window.afNative?.openInApp) window.afNative.openInApp(url);
+  else window.open(url, '_blank', 'noopener');
+}
+
+async function openInBrowser(url, app = 'default') {
+  try {
+    await api('/api/open-with', { method: 'POST', body: { url, app } });
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+async function browserItems(url) {
+  const apps = await openApps();
+  return [{ group: '用浏览器打开' }, ...apps.url.map((a) => ({ label: a.label, run: () => openInBrowser(url, a.id) }))];
+}
+
+async function showViewMenu(anchor, url, title = '') {
+  showPop(anchor, [
+    { group: '在本软件里查看' },
+    { label: '应用内阅读', hint: '排版提取 · 不入库', run: () => openReader(url, title) },
+    { label: '应用内网页原样', hint: '原网页', run: () => openWebInApp(url) },
+    'hr',
+    ...(await browserItems(url)),
+    'hr',
+    { label: '抓取转换并收入资料库', run: () => window.afConvertUrl(url, title) },
+    { label: '复制链接', run: () => navigator.clipboard?.writeText(url).then(() => toast('已复制链接', 'ok')) },
+  ]);
+}
+
+/* ---------------- 应用内阅读：先看后收 ---------------- */
+
+const reader = { seq: 0, id: '', url: '', inLibrary: false, saved: false };
+
+async function openReader(url, title = '') {
+  closePop();
+  const seq = ++reader.seq;
+  Object.assign(reader, { id: '', url, inLibrary: false, saved: false });
+  $('#reader').hidden = false;
+  $('#readerTitle').textContent = title || url;
+  $('#readerLoading').hidden = false;
+  $('#readerLoading .spinner').hidden = false;
+  $('#readerLoadingText').textContent = '正在提取正文排版…（通常几秒，公众号文章稍慢）';
+  $('#readerToc').hidden = true;
+  $('#readerSave').disabled = true;
+  $('#readerSave').textContent = '收入资料库';
+  const frame = $('#readerFrame');
+  frame.onload = null;
+  frame.src = 'about:blank';
+  try {
+    const r = await api('/api/peek', { method: 'POST', body: { url, titleHint: title } });
+    if (seq !== reader.seq) return;
+    reader.id = r.article.id;
+    reader.url = r.article.finalUrl || r.article.url || url;
+    reader.inLibrary = r.inLibrary;
+    $('#readerTitle').textContent = r.article.title || title || url;
+    $('#readerSave').disabled = false;
+    $('#readerSave').textContent = r.inLibrary ? '已在资料库 · 去打开' : '收入资料库';
+    frame.onload = () => {
+      if (seq !== reader.seq || frame.src === 'about:blank') return;
+      $('#readerLoading').hidden = true;
+      const box = $('#readerToc');
+      box._count = bindFrameOutline(frame, box, { onClose: () => setReaderOutline(false) });
+      setReaderOutline(state.outlineOpen);
+    };
+    frame.src = `/api/peek/${reader.id}/preview?${previewQuery()}`;
+  } catch (e) {
+    if (seq !== reader.seq) return;
+    $('#readerLoading .spinner').hidden = true;
+    $('#readerLoadingText').textContent = `提取失败：${e.message}。可点右上「网页原样」直接看原网页。`;
+  }
+}
+
+function setReaderOutline(open) {
+  const box = $('#readerToc');
+  box.hidden = !(open && (box._count || 0) > 0);
+  $('#readerOutline').classList.toggle('on', !box.hidden);
+}
+
+function closeReader() {
+  reader.seq++;
+  $('#reader').hidden = true;
+  $('#readerFrame').src = 'about:blank';
+}
+
+async function saveReader() {
+  if (!reader.id) return;
+  if (reader.inLibrary || reader.saved) {
+    const id = reader.id;
+    closeReader();
+    switchView('convert');
+    return openArticle(id);
+  }
+  try {
+    $('#readerSave').disabled = true;
+    await api(`/api/peek/${reader.id}/save`, { method: 'POST' });
+    reader.saved = true;
+    $('#readerSave').textContent = '已收入 · 去打开';
+    toast('已收入资料库', 'ok');
+    loadLibrary();
+  } catch (e) {
+    toast(e.message, 'err');
+  } finally {
+    $('#readerSave').disabled = false;
+  }
 }
 
 function setTab(tab) {
@@ -547,11 +813,14 @@ function setTab(tab) {
   $('#outlineView').hidden = tab !== 'outline';
   $('#relatedView').hidden = tab !== 'related';
   frame.style.visibility = tab === 'preview' ? 'visible' : 'hidden';
+  applyDocOutline();
 
   if (!a) return;
   if (tab === 'preview') {
+    $('#docOutline')._count = 0;
+    applyDocOutline();
     frame.onload = onPreviewLoad;
-    frame.src = `/api/articles/${a.id}/preview?t=${Date.now()}`;
+    frame.src = `/api/articles/${a.id}/preview?${previewQuery()}`;
     $('#previewEmpty').hidden = true;
   } else if (tab === 'markdown') {
     $('#mdSource').textContent = a.markdown || '（无内容）';
@@ -570,36 +839,40 @@ function setTab(tab) {
   }
 }
 
+/** 相关文章：来源 / 时间 / 排序可选，选择记在 localStorage */
+let relSeq = 0;
 async function loadRelated(id) {
-  const box = $('#relatedView');
-  box.innerHTML = '<div class="skeleton">正在检索相关文章…</div>';
+  const box = $('#relResults');
+  const opts = {
+    query: $('#relQuery').value.trim(),
+    sources: $('#relSource').value,
+    timeRange: $('#relTime').value,
+    sortBy: $('#relSort').value,
+  };
   try {
-    const { groups } = await api(`/api/articles/${id}/related`, { method: 'POST', body: {} });
+    localStorage.setItem('af.related', JSON.stringify({ sources: opts.sources, timeRange: opts.timeRange, sortBy: opts.sortBy }));
+  } catch {}
+  const seq = ++relSeq;
+  const slow = opts.sources !== 'web';
+  box.innerHTML = `<div class="skeleton">正在检索相关文章…${slow ? '（多源检索，约 5～20 秒）' : ''}</div>`;
+  try {
+    const { groups } = await api(`/api/articles/${id}/related`, { method: 'POST', body: opts });
+    if (seq !== relSeq || state.current?.id !== id) return;
     if (!groups.length) {
-      box.innerHTML = '<div class="skeleton">这篇没有提取到可用的检索词，试试直接用「检索」页搜相关内容</div>';
+      box.innerHTML = '<div class="skeleton">这篇没有提取到可用的检索词，在上面输入检索词试试</div>';
       return;
     }
     box.innerHTML = groups
       .map(
         (g) => `<div class="rel-group">
-        <div class="rel-q">检索词 · ${esc(g.query)}</div>
-        ${(g.results || [])
-          .map(
-            (r) => `<div class="result">
-            <div class="r-main">
-              <div class="r-title"><a href="${esc(r.url)}" target="_blank" rel="noreferrer">${esc(r.title)}</a></div>
-              <div class="r-snippet">${esc(r.snippet || '')}</div>
-              <div class="r-meta"><span>${esc(r.source)}</span></div>
-            </div>
-            <button class="btn sm" data-convert="${esc(r.url)}" data-title="${esc(r.title)}">转换</button>
-          </div>`
-          )
-          .join('') || '<div class="skeleton">没有找到结果</div>'}
+        <div class="rel-q">检索词 · ${esc(g.query)}${g.results?.length ? ` · ${g.results.length} 条` : ''}</div>
+        ${g.notes?.length ? `<div class="rel-note">${esc(g.notes.slice(0, 2).join('；'))}</div>` : ''}
+        ${(g.results || []).map(resultRow).join('') || `<div class="skeleton">${esc(g.error ? `检索失败：${g.error}` : '没有找到结果，可换来源或放宽时间')}</div>`}
       </div>`
       )
       .join('');
   } catch (e) {
-    box.innerHTML = `<div class="skeleton">检索失败：${esc(e.message)}</div>`;
+    if (seq === relSeq) box.innerHTML = `<div class="skeleton">检索失败：${esc(e.message)}</div>`;
   }
 }
 
@@ -1257,14 +1530,17 @@ function positionToolbar(x, y) {
 window.addEventListener('message', (e) => {
   const d = e.data;
   if (!d || d.source !== 'af-preview') return;
-  if (d.type === 'selection' && d.text) {
+  // 划词提问只对资料库里打开的正文生效；应用内阅读（未入库）的选区不往 AI 栏送
+  const fromPreview = e.source === $('#previewFrame').contentWindow;
+  if (d.type === 'selection' && d.text && fromPreview) {
     const frame = $('#previewFrame').getBoundingClientRect();
     setSelection(d.text);
     positionToolbar(frame.left + d.rect.left + d.rect.width / 2, frame.top + d.rect.top - 8);
   } else if (d.type === 'clear') {
     $('#selToolbar').hidden = true;
   } else if (d.type === 'open-url' && d.url) {
-    window.open(d.url, '_blank', 'noopener');
+    // 正文里的链接直接在本软件里打开，不用切去浏览器
+    openWebInApp(d.url);
   }
 });
 
@@ -1313,7 +1589,7 @@ function resultRow(r) {
   const isWx = tag === '公众号';
   return `<div class="result">
         <div class="r-main">
-          <div class="r-title"><a href="${esc(r.url)}" target="_blank" rel="noreferrer">${esc(r.title)}</a></div>
+          <div class="r-title"><a href="${esc(r.url)}" data-read="${esc(r.url)}" data-title="${esc(r.title)}" title="点击在本软件里阅读">${esc(r.title)}</a></div>
           <div class="r-snippet">${esc(r.snippet || '')}</div>
           <div class="r-meta">
             <span class="src-tag ${isWx ? 'wx' : ''}">${esc(tag)}</span>
@@ -1322,7 +1598,10 @@ function resultRow(r) {
             ${r.needsResolve ? '<span>链接将在转换时解析</span>' : ''}
           </div>
         </div>
-        <button class="btn sm" data-convert="${esc(r.url)}" data-title="${esc(r.title)}">抓取转换</button>
+        <div class="r-actions">
+          <button class="btn sm" data-viewmenu="${esc(r.url)}" data-title="${esc(r.title)}" title="选择查看方式：本软件阅读 / 本软件网页原样 / 浏览器">查看 ▾</button>
+          <button class="btn sm" data-convert="${esc(r.url)}" data-title="${esc(r.title)}">抓取转换</button>
+        </div>
       </div>`;
 }
 
@@ -1512,6 +1791,7 @@ async function loadKbBrowser() {
     renderKbNoteList();
     $('#kbReader').innerHTML = '<div class="skeleton">从左侧选一篇笔记查看</div>';
     $('#kbToc').hidden = true;
+    $('.kb-browser').classList.remove('has-toc');
     if (kbBrowser.files.length) openKbNote(kbBrowser.files[0].path);
   } catch (e) {
     list.innerHTML = `<div class="skeleton">${esc(e.message)}</div>`;
@@ -1576,6 +1856,7 @@ async function openKbNote(p) {
   const reader = $('#kbReader');
   reader.innerHTML = '<div class="skeleton">加载中…</div>';
   $('#kbToc').hidden = true;
+  $('.kb-browser').classList.remove('has-toc');
   try {
     const { note } = await api(`/api/kb/note?path=${encodeURIComponent(p)}`);
     let md = note.content || '';
@@ -1592,18 +1873,28 @@ async function openKbNote(p) {
           <div class="kb-reader-meta">${esc(note.path)} · ${note.mtime ? new Date(note.mtime).toLocaleString('zh-CN') : ''} · ${fmtSize(note.size)}</div>
         </div>
         <div class="kb-reader-actions">
-          <button class="btn sm kb-toc-btn" id="kbTocBtn" hidden>目录</button>
-          <button class="btn sm" id="kbOpenExternal" title="用 Obsidian / Typora 等默认软件打开">用默认软件打开</button>
+          <button class="btn sm kb-toc-btn" id="kbTocBtn" hidden>大纲</button>
+          <button class="btn sm" id="kbOpenExternal" title="选择用哪个软件打开：默认 / Obsidian / VS Code / Typora / 记事本">打开方式 ▾</button>
         </div>
       </div>
       <div class="kb-reader-body">${mdLite(md)}</div>`;
-    $('#kbOpenExternal').onclick = async () => {
-      try {
-        await api('/api/kb/note/open', { method: 'POST', body: { path: note.path } });
-        toast('已用系统默认软件打开', 'ok');
-      } catch (e) {
-        toast(e.message, 'err');
-      }
+    const openBtn = $('#kbOpenExternal');
+    openBtn.onclick = async () => {
+      const apps = await openApps();
+      showPop(openBtn, [
+        { group: '用其它软件打开这篇笔记' },
+        ...apps.file.map((a) => ({
+          label: a.label,
+          run: async () => {
+            try {
+              await api('/api/kb/note/open', { method: 'POST', body: { path: note.path, app: a.id } });
+              toast(`已用${a.label}打开`, 'ok');
+            } catch (e) {
+              toast(e.message, 'err');
+            }
+          },
+        })),
+      ]);
     };
     buildKbToc(reader);
   } catch (e) {
@@ -1615,60 +1906,57 @@ async function openKbNote(p) {
 function buildKbToc(reader) {
   const toc = $('#kbToc');
   const tocBtn = $('#kbTocBtn');
-  const heads = [...reader.querySelectorAll('.kb-reader-body h1, .kb-reader-body h2, .kb-reader-body h3, .kb-reader-body h4')];
+  const browser = toc.closest('.kb-browser');
+  const heads = [...reader.querySelectorAll('.kb-reader-body h1, .kb-reader-body h2, .kb-reader-body h3, .kb-reader-body h4')].filter((h) =>
+    h.textContent.trim()
+  );
+  const show = (open) => {
+    toc.hidden = !open;
+    browser.classList.toggle('has-toc', open);
+    tocBtn?.classList.toggle('on', open);
+    if (open) kbTocSpy();
+  };
   if (heads.length < 2) {
-    toc.hidden = true;
     toc.innerHTML = '';
     if (tocBtn) tocBtn.hidden = true;
+    show(false);
     return;
   }
   heads.forEach((h, i) => (h.id = `kbh-${i}`));
-  toc.innerHTML =
-    '<div class="kb-toc-head">目录<button id="kbTocClose" title="收起目录">×</button></div>' +
-    heads
-      .map((h) => {
-        const txt = h.textContent.trim().replace(/\s+/g, ' ');
-        return `<div class="kb-toc-row l${h.tagName[1]}" data-h="${h.id}" title="${esc(txt)}">${esc(txt.length > 36 ? txt.slice(0, 36) + '…' : txt)}</div>`;
-      })
-      .join('');
-  toc.hidden = false;
-  toc.scrollTop = 0;
+  toc._lastActive = '';
+  renderOutline(
+    toc,
+    heads.map((h) => ({ id: h.id, level: Number(h.tagName[1]), text: h.textContent.trim().replace(/\s+/g, ' ') })),
+    {
+      onJump: (id) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+      onClose: () => {
+        setDocOutlineOpen(false);
+        show(false);
+      },
+    }
+  );
   if (tocBtn) {
     tocBtn.hidden = false;
-    tocBtn.textContent = `目录 ${heads.length}`;
-    tocBtn.classList.add('on');
-    tocBtn.onclick = () => {
-      toc.hidden = !toc.hidden;
-      tocBtn.classList.toggle('on', !toc.hidden);
-      if (!toc.hidden) kbTocSpy();
-    };
+    tocBtn.textContent = `大纲 ${heads.length}`;
+    tocBtn.onclick = () => show(toc.hidden);
   }
-  kbTocSpy();
+  show(state.outlineOpen !== false);
 }
 
-/** 滚动跟随：正文滚到哪一节，目录就高亮到哪一行 */
+/** 滚动跟随：正文滚到哪一节，大纲就高亮到哪一行 */
 function kbTocSpy() {
   const reader = $('#kbReader');
   const toc = $('#kbToc');
   if (!toc || toc.hidden) return;
-  const rows = [...toc.querySelectorAll('.kb-toc-row')];
-  if (!rows.length) return;
+  const heads = $$('.kb-reader-body [id^="kbh-"]', reader);
+  if (!heads.length) return;
   const rb = reader.getBoundingClientRect();
-  let cur = rows[0].dataset.h;
-  for (const row of rows) {
-    const h = document.getElementById(row.dataset.h);
-    if (!h) continue;
-    if (h.getBoundingClientRect().top - rb.top <= 72) cur = row.dataset.h;
+  let cur = heads[0].id;
+  for (const h of heads) {
+    if (h.getBoundingClientRect().top - rb.top <= 72) cur = h.id;
     else break;
   }
-  rows.forEach((r) => r.classList.toggle('active', r.dataset.h === cur));
-  const act = toc.querySelector('.kb-toc-row.active');
-  if (act) {
-    const top = act.offsetTop;
-    if (top < toc.scrollTop + 8 || top + act.offsetHeight > toc.scrollTop + toc.clientHeight - 8) {
-      toc.scrollTop = top - toc.clientHeight / 2 + act.offsetHeight / 2;
-    }
-  }
+  setOutlineActive(toc, cur);
 }
 
 async function loadKb() {
@@ -2308,8 +2596,15 @@ function applyGrid() {
   cols.push('minmax(0, 1fr)');
   if (showAi) cols.push('372px');
   document.querySelector('.app').style.gridTemplateColumns = cols.join(' ');
-  $('#listTab').hidden = showList;
-  $('#aiTab').hidden = showAi;
+  // 顶栏的两个收起按钮：亮色 = 展开中，灰色 = 已收起
+  const lt = $('#tbListToggle');
+  lt.classList.toggle('on', showList);
+  lt.classList.toggle('off', !showList);
+  lt.title = state.view !== 'convert' ? '打开资料库栏（回到转换页）' : showList ? '收起左侧资料库栏' : '展开左侧资料库栏';
+  const at = $('#tbAiToggle');
+  at.classList.toggle('on', showAi);
+  at.classList.toggle('off', !showAi);
+  at.title = showAi ? '收起右侧 AI 栏' : '展开右侧 AI 栏';
 }
 
 function togglePanel(which) {
@@ -2323,7 +2618,10 @@ function togglePanel(which) {
 function switchView(view) {
   state.view = view;
   $('#selToolbar').hidden = true;
+  closePop();
+  if (!$('#reader').hidden) closeReader();
   $$('.rail-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  $('#tbTodo').classList.toggle('active', view === 'todo');
   $$('.main > .view').forEach((v) => (v.hidden = true));
   const map = { convert: '#viewConvert', search: '#viewSearch', todo: '#viewTodo', watch: '#viewWatch', knowledge: '#viewKnowledge', settings: '#viewSettings' };
   $(map[view]).hidden = false;
@@ -2527,11 +2825,88 @@ function bind() {
     if ((state.todos || []).length) renderTodos();
   });
 
-  // 两侧面板收起 / 展开
-  $('#listCollapse').onclick = () => togglePanel('list');
-  $('#aiCollapse').onclick = () => togglePanel('ai');
-  $('#listTab').onclick = () => togglePanel('list');
-  $('#aiTab').onclick = () => togglePanel('ai');
+  // 顶栏：两侧面板收起 / 展开、待办、菜单
+  $('#tbListToggle').onclick = () => {
+    if (state.view !== 'convert') {
+      // 其它页面没有资料库栏：点它就回到转换页并展开
+      state.panels.list = true;
+      try {
+        localStorage.setItem('afPanels', JSON.stringify(state.panels));
+      } catch {}
+      return switchView('convert');
+    }
+    togglePanel('list');
+  };
+  $('#tbAiToggle').onclick = () => togglePanel('ai');
+  $('#tbTodo').onclick = () => switchView('todo');
+  if (window.afNative) {
+    document.body.classList.add('desktop');
+    $('#tbMenu').onclick = (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      window.afNative.popupMenu(r.left, r.bottom + 2);
+    };
+  } else {
+    $('#tbMenu').hidden = true;
+  }
+  $('#titlebar').addEventListener('dblclick', (e) => e.preventDefault());
+
+  // 排版预览的标题大纲开关
+  $('#outlineToggle').onclick = () => setDocOutlineOpen(!state.outlineOpen);
+
+  // 相关文章：来源 / 时间 / 排序，改了立即重搜
+  try {
+    const rel = JSON.parse(localStorage.getItem('af.related') || 'null');
+    if (rel) {
+      if (rel.sources) $('#relSource').value = rel.sources;
+      if (rel.timeRange != null) $('#relTime').value = rel.timeRange;
+      if (rel.sortBy) $('#relSort').value = rel.sortBy;
+    }
+  } catch {}
+  const relGo = () => state.current && loadRelated(state.current.id);
+  $('#relGo').onclick = relGo;
+  $('#relQuery').addEventListener('keydown', (e) => e.key === 'Enter' && relGo());
+  ['#relSource', '#relTime', '#relSort'].forEach((s) => ($(s).onchange = relGo));
+  // 选了时间范围就切到按时间排，避免新文被相关度埋掉
+  $('#relTime').addEventListener('change', () => {
+    if ($('#relTime').value) $('#relSort').value = 'time';
+  });
+
+  // 检索结果 / 相关文章：点标题 = 本软件内阅读；「查看 ▾」= 选择查看方式
+  document.addEventListener('click', (e) => {
+    const read = e.target.closest('[data-read]');
+    if (read) {
+      e.preventDefault();
+      return openReader(read.dataset.read, read.dataset.title || '');
+    }
+    const vm = e.target.closest('[data-viewmenu]');
+    if (vm) {
+      e.stopPropagation();
+      return showViewMenu(vm, vm.dataset.viewmenu, vm.dataset.title || '');
+    }
+    if (!e.target.closest('#popMenu')) closePop();
+  });
+  window.addEventListener('blur', closePop);
+
+  // 应用内阅读
+  $('#readerClose').onclick = closeReader;
+  $('#readerSave').onclick = saveReader;
+  $('#readerWeb').onclick = () => reader.url && openWebInApp(reader.url);
+  $('#readerBrowser').onclick = async (e) => {
+    const btn = e.currentTarget;
+    e.stopPropagation();
+    if (reader.url) showPop(btn, await browserItems(reader.url));
+  };
+  $('#readerOutline').onclick = () => {
+    const open = $('#readerToc').hidden;
+    if (open && !($('#readerToc')._count > 0)) return toast('这篇没有识别出标题');
+    setReaderOutline(open);
+  };
+  window.afConvertUrl = (url, title = '') => {
+    if (!$('#reader').hidden) closeReader();
+    switchView('convert');
+    $('#urlInput').value = url;
+    doFetch(title);
+  };
 
   $('#kbRefreshBtn').onclick = loadKbBrowser;
   $('#kbNoteFilter').oninput = (e) => {
@@ -2552,21 +2927,7 @@ function bind() {
   };
   // 阅读器标题目录：点行跳转，滚正文高亮
   $('#kbReader').addEventListener('scroll', kbTocSpy);
-  $('#kbToc').addEventListener('click', (e) => {
-    if (e.target.closest('#kbTocClose')) {
-      $('#kbToc').hidden = true;
-      $('#kbTocBtn')?.classList.remove('on');
-      return;
-    }
-    const row = e.target.closest('.kb-toc-row');
-    const h = row && document.getElementById(row.dataset.h);
-    if (h) h.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-  $('#reloadPreview').onclick = () => {
-    const f = $('#previewFrame');
-    f.src = f.src.split('?')[0] + '?t=' + Date.now();
-    $('#previewEmpty').hidden = true;
-  };
+  $('#reloadPreview').onclick = () => setTab('preview');
   $('#organizeBtn').onclick = openOrganizeModal;
   $('#clearChat').onclick = async () => {
     if (!state.current) return;
@@ -2598,6 +2959,8 @@ function bind() {
   };
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (!$('#popMenu').hidden) return closePop();
+      if ($('#modalMask').hidden && !$('#reader').hidden) return closeReader();
       closeModal();
       $('#selToolbar').hidden = true;
     }

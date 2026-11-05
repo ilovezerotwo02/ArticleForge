@@ -1,7 +1,7 @@
 /** 知识库目标适配器注册表 */
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { openFileWith } from '../openwith.js';
 import { DATA, settings } from '../config.js';
 import obsidian from './obsidian.js';
 import folder from './folder.js';
@@ -294,9 +294,7 @@ export function kbReadNote(rel) {
 }
 
 /** 用系统默认软件打开笔记（Obsidian / Typora 等） */
-export function kbOpenNote(rel) {
+export function kbOpenNote(rel, app = 'default') {
   const { abs } = kbResolve(rel);
-  const cmd = process.platform === 'win32' ? 'explorer' : process.platform === 'darwin' ? 'open' : 'xdg-open';
-  spawn(cmd, [abs], { detached: true, stdio: 'ignore' }).unref();
-  return { opened: abs };
+  return openFileWith(abs, app);
 }

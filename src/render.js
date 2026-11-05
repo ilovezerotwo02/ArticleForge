@@ -108,7 +108,18 @@ body{
 }
 `;
 
-export function renderReadingHtml(article, { mode = 'preview' } = {}) {
+/** 自定义背景时的半透明正文：页面透明透出背景，正文是一张半透明纸，保证可读 */
+const TRANSLUCENT_CSS = `
+html,body{background:transparent !important}
+.af-page{background:rgba(255,255,255,var(--af-paper,.82));border-radius:14px;margin:18px auto;box-shadow:0 6px 28px rgba(16,24,40,.10);backdrop-filter:blur(3px)}
+.af-toc{background:rgba(255,255,255,.6) !important}
+.af-stats span{background:rgba(255,255,255,.6) !important}
+.af-body pre.code-block{background:rgba(246,248,250,.86)}
+.af-body pre.code-block::before{background:rgba(238,241,245,.86)}
+.af-body blockquote{background:rgba(248,249,255,.75)}
+`;
+
+export function renderReadingHtml(article, { mode = 'preview', embed = false, translucent = false } = {}) {
   const isPreview = mode !== 'pdf';
   const { title, account, author, publishedAt, url, html, outline = [], assets = [], words } = article;
   const metaBits = [
@@ -118,8 +129,9 @@ export function renderReadingHtml(article, { mode = 'preview' } = {}) {
   ].filter(Boolean);
 
   const tocItems = outline.filter((o) => o.level <= 2);
+  // 嵌在应用里时由外层的大纲侧栏（Obsidian 式）负责目录，正文里不再重复一个目录框
   const toc =
-    tocItems.length >= 3
+    !embed && tocItems.length >= 3
       ? `<nav class="af-toc"><h4>目录 · ${tocItems.length} 节</h4><ol>${tocItems
           .map((o) => `<li><a href="#${esc(o.id)}">${esc(o.text)}</a></li>`)
           .join('')}</ol></nav>`
@@ -138,6 +150,7 @@ export function renderReadingHtml(article, { mode = 'preview' } = {}) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title>
 <style>${CSS}</style>
+${translucent ? `<style id="af-translucent">${TRANSLUCENT_CSS}</style>` : ''}
 </head>
 <body>
 <main class="af-page">

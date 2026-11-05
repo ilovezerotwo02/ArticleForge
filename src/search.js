@@ -830,6 +830,63 @@ async function searchTavily(query, max, { timeRange = '' } = {}) {
 const CACHE = new Map();
 const CACHE_TTL = 3 * 60_000;
 
+/* ---------------- 关键词匹配（中文友好） ----------------
+ * 旧逻辑只按空格切词：「内存取证教程」会被当成一整串去标题里找，
+ * 标题写成「内存取证入门教程」就判成无关被过滤。这里改成：
+ *   英文/数字按词，中文连续串按整串 + 二元组（bigram）部分匹配，停用词不计分。
+ */
+const STOP_CN = /^(的|了|和|与|及|或|在|是|吗|呢|啊|怎么|如何|什么|哪些|为什么|一个|一些|关于)$/;
+const STOP_CN_EDGE = /^(的|了|和|与|及|或|在|是|怎么|如何|什么)+|(的|了|吗|呢|啊)+$/g;
+
+export function queryTerms(query) {
+  const out = [];
+  const seen = new Set();
+  const raw = String(query || '').toLowerCase().replace(/site:\S+/g, ' ');
+  const pieces = [];
+  for (const m of raw.matchAll(/[a-z0-9][a-z0-9._+#-]*|[㐀-鿿]+/g)) {
+    // 中文串在「的/和/与/及/或」处再断开：「逆向的方法」→「逆向」「方法」
+    if (/^[㐀-鿿]/.test(m[0])) pieces.push(...m[0].split(/[的和与及或]/).filter(Boolean));
+    else pieces.push(m[0]);
+  }
+  for (const piece of pieces) {
+    let t = piece;
+    if (/^[㐀-鿿]/.test(t)) t = t.replace(STOP_CN_EDGE, '');
+    if (!t || STOP_CN.test(t)) continue;
+    if (/^[a-z0-9]/.test(t) && t.length < 2) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    const cjk = /^[㐀-鿿]+$/.test(t);
+    const grams = [];
+    if (cjk && t.length > 2) for (let i = 0; i < t.length - 1; i++) grams.push(t.slice(i, i + 2));
+    out.push({ text: t, cjk, grams });
+  }
+  return out;
+}
+
+/** 单个词在文本里的命中度：整串命中 1；中文长串按二元组覆盖率给部分分 */
+function termHit(hay, term) {
+  if (hay.includes(term.text)) return 1;
+  if (!term.grams.length) return 0;
+  let n = 0;
+  for (const g of term.grams) if (hay.includes(g)) n++;
+  const frac = n / term.grams.length;
+  return frac >= 0.5 ? frac * 0.9 : 0;
+}
+
+/** 结果与查询的匹配度 0~1：标题权重高，标题+摘要+公众号名兜底 */
+export function matchScore(r, terms) {
+  if (!terms.length) return { title: 1, all: 1 };
+  const title = String(r.title || '').toLowerCase().replace(/\s+/g, '');
+  const all = `${title} ${String(r.snippet || '').toLowerCase()} ${String(r.account || '').toLowerCase()}`;
+  let t = 0;
+  let a = 0;
+  for (const term of terms) {
+    t += termHit(title, term);
+    a += termHit(all, term);
+  }
+  return { title: t / terms.length, all: a / terms.length };
+}
+
 /** 轮转合并：每个源轮流出一条，避免单源刷屏 */
 function interleave(groups) {
   const lists = groups.filter((g) => g.items?.length).map((g) => g.items.slice());
@@ -987,6 +1044,17 @@ export async function searchWeb(query, opts = {}) {
     if (webProvider === 'tavily') tasks.push({ name: 'tavily', run: () => searchTavily(query, n, { timeRange }) });
     if (webProvider === 'sogou-web' || webProvider === 'sogou') tasks.push({ name: 'sogou-web', run: () => searchSogouWeb(query, n, { pages: 1 }) });
   }
+  // 没选时间范围时，再并一路「近期收录」快查：搜索引擎默认按相关度排序，新文常被老文压在后几页。
+  // 只用 Bing（免验证码、无频控）；百度多打一次就容易触发安全验证，所以不加。
+  if (!RANGE_DAYS[timeRange] && src !== 'intel' && opts.recent !== false) {
+    if (src === 'wechat' || src === 'all') {
+      tasks.push({ name: 'bing-wx-recent', run: () => searchBing(`site:mp.weixin.qq.com ${query}`, Math.min(n, 30), { timeRange: 'month', requireHost: 'mp.weixin.qq.com' }) });
+    }
+    if (src === 'web' || src === 'all') {
+      tasks.push({ name: 'bing-recent', run: () => searchBing(query, Math.min(n, 30), { timeRange: 'month' }) });
+    }
+  }
+
   if (src === 'wechat' && webProvider === 'tavily' && settings().search?.tavilyKey) {
     tasks.push({ name: 'tavily', run: () => searchTavily(`site:mp.weixin.qq.com ${query}`, n, { timeRange }) });
   }
@@ -1059,8 +1127,10 @@ export async function searchWeb(query, opts = {}) {
   // 搜狗条数太少时，用「去重分词」再补一轮（公众号搜索常因短语太严而漏结果）
   const sogouGroup = groups.find((g) => g.name === 'sogou');
   const tokens = String(query).split(/\s+/).filter(Boolean);
-  if (sogouGroup && sogouGroup.items.length < 8 && tokens.length > 1) {
-    const loose = [...new Set(tokens)].join(' ');
+  const qTerms0 = queryTerms(query);
+  if (sogouGroup && sogouGroup.items.length < 8 && (tokens.length > 1 || qTerms0.length > 1)) {
+    // 有空格就去重；没空格的中英混排（如「volatility使用教程」）按中英边界拆开再搜
+    const loose = tokens.length > 1 ? [...new Set(tokens)].join(' ') : qTerms0.map((t) => t.text).join(' ');
     if (loose !== query) {
       try {
         const extra = await searchSogouWeixin(loose, Math.min(20, n), { pages: 2, sortBy });
@@ -1111,10 +1181,7 @@ export async function searchWeb(query, opts = {}) {
   }
 
   // 排序
-  const qTokens = String(query)
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((t) => t.length > 1);
+  const qTerms = queryTerms(query);
   // 完整短语（去空格）用于命中中文标题——标题里通常不带空格
   const qPhrase = String(query).toLowerCase().replace(/\s+/g, '');
   if (sortBy === 'time') {
@@ -1127,24 +1194,21 @@ export async function searchWeb(query, opts = {}) {
   } else {
     const score = (r) => {
       const t = String(r.title || '').toLowerCase();
-      const s = String(r.snippet || '').toLowerCase();
-      const acc = String(r.account || '').toLowerCase();
-      let v = 0;
-      for (const tok of qTokens) {
-        if (t.includes(tok)) v += 2;
-        if (s.includes(tok)) v += 1;
-        if (acc && acc.includes(tok)) v += 2;
-      }
+      const m = matchScore(r, qTerms);
+      // 匹配度为主：标题覆盖 0~6 分，标题+摘要+公众号 0~3 分
+      let v = m.title * 6 + m.all * 3;
       // 整个查询短语直接出现在标题里 → 强相关
       if (qPhrase.length > 1 && t.replace(/\s+/g, '').includes(qPhrase)) v += 3;
-      // 新鲜度轻加权：同等相关度时新文靠前，老文略降，不改变相关度的主导地位
+      // 新鲜度加权：匹配度相近时新文明显靠前，一年以上的老文降一档
       if (r.date) {
         const age = Date.now() - tsOf(r.date);
-        if (age >= 0 && age < 7 * 86400_000) v += 1.5;
-        else if (age >= 0 && age < 30 * 86400_000) v += 0.8;
-        else if (age > 365 * 86400_000) v -= 0.5;
+        if (age >= 0 && age < 3 * 86400_000) v += 2.5;
+        else if (age >= 0 && age < 7 * 86400_000) v += 2;
+        else if (age >= 0 && age < 30 * 86400_000) v += 1.2;
+        else if (age >= 0 && age < 90 * 86400_000) v += 0.5;
+        else if (age > 365 * 86400_000) v -= 1;
       } else {
-        v -= 0.2;
+        v -= 0.3;
       }
       return v;
     };
@@ -1157,11 +1221,9 @@ export async function searchWeb(query, opts = {}) {
   // 关键词相关度门禁：搜索引擎（尤其搜狗微信）在窗内没内容时会回一堆「只沾边」的结果
   //（标题里带个「内存」就算命中），混在按时间排序的列表里最干扰。
   // 相关结果够多 → 直接过滤掉无关的；有相关的 → 无关的沉底；全都不相关 → 明说，不装作有结果。
-  if (qTokens.length && results.length > 4) {
-    const rel = (r) => {
-      const hay = `${r.title || ''} ${r.snippet || ''} ${r.account || ''}`.toLowerCase();
-      return qTokens.filter((t) => hay.includes(t)).length;
-    };
+  if (qTerms.length && results.length > 4) {
+    // 覆盖一半以上查询词（中文长词按二元组算部分覆盖）才算相关
+    const rel = (r) => (matchScore(r, qTerms).all >= 0.5 ? 1 : 0);
     const relevant = results.filter((r) => rel(r) > 0);
     if (relevant.length >= 5 && relevant.length < results.length) {
       notes.push(`已过滤 ${results.length - relevant.length} 条与「${query}」无关的结果`);

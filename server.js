@@ -24,6 +24,7 @@ import {
   kbFiles, kbReadNote, kbOpenNote,
 } from './src/kb/index.js';
 import { closeBrowser } from './src/fetchPage.js';
+import { listOpenApps, openUrlWith } from './src/openwith.js';
 
 const app = express();
 const PORT = Number(process.env.PORT || 5178);
@@ -159,6 +160,39 @@ app.post('/api/extract', async (req, res) => {
   }
 });
 
+/* ---------------- 应用内阅读（先看后收：不进资料库，满意再一键收入） ---------------- */
+
+const PEEK = new Map(); // id -> article，只留最近 20 篇
+const PEEK_MAX = 20;
+
+app.post('/api/peek', async (req, res) => {
+  const { url, titleHint = '' } = req.body || {};
+  if (!url || !/^https?:\/\//i.test(url)) return fail(res, new Error('请输入合法的 http(s) 链接'));
+  try {
+    const article = await buildArticle(String(url).trim(), { titleHint });
+    PEEK.delete(article.id);
+    PEEK.set(article.id, article);
+    while (PEEK.size > PEEK_MAX) PEEK.delete(PEEK.keys().next().value);
+    ok(res, { article: publicArticle(article), inLibrary: !!getArticle(article.id) });
+  } catch (e) {
+    fail(res, e, 500);
+  }
+});
+
+app.get('/api/peek/:id/preview', (req, res) => {
+  const a = PEEK.get(req.params.id) || getArticle(req.params.id);
+  if (!a) return res.status(404).type('html').send('<p style="font:14px sans-serif;padding:24px">预览已过期，请重新打开</p>');
+  res.type('html').send(renderReadingHtml(a, { mode: 'preview', embed: req.query.embed === '1', translucent: req.query.bg === '1' }));
+});
+
+app.post('/api/peek/:id/save', (req, res) => {
+  const a = PEEK.get(req.params.id);
+  if (!a) return fail(res, new Error('预览已过期，请重新抓取'), 404);
+  saveArticle(a);
+  emit('library:update', { id: a.id });
+  ok(res, { article: publicArticle(a) });
+});
+
 app.post('/api/upload', upload.array('files', 10), async (req, res) => {
   const files = req.files || [];
   if (!files.length) return fail(res, new Error('没有收到文件'));
@@ -222,7 +256,7 @@ app.patch('/api/articles/:id', (req, res) => {
 app.get('/api/articles/:id/preview', (req, res) => {
   const a = getArticle(req.params.id);
   if (!a) return fail(res, new Error('文章不存在'), 404);
-  res.type('html').send(renderReadingHtml(a, { mode: 'preview' }));
+  res.type('html').send(renderReadingHtml(a, { mode: 'preview', embed: req.query.embed === '1', translucent: req.query.bg === '1' }));
 });
 
 app.get('/api/articles/:id/markdown', (req, res) => {
@@ -300,18 +334,26 @@ app.post('/api/search/verify', async (req, res) => {
 app.post('/api/articles/:id/related', async (req, res) => {
   const a = getArticle(req.params.id);
   if (!a) return fail(res, new Error('文章不存在'), 404);
-  const queries = buildRelatedQueries(a);
-  const out = [];
-  for (const q of queries) {
-    try {
-      // 相关文章只要轻量快查：网页源单页，不碰搜狗公众号（慢且易反爬），几秒内返回
-      const r = await searchWeb(q, { max: 6, sources: 'web', pages: 1, provider: 'baidu', sortBy: 'relevance' });
-      out.push({ query: q, results: r.results });
-    } catch (e) {
-      out.push({ query: q, results: [], error: e.message });
-    }
-  }
-  ok(res, { queries, groups: out });
+  const { sources = 'web', timeRange = '', sortBy = 'relevance', query = '' } = req.body || {};
+  const src = ['all', 'wechat', 'web', 'intel'].includes(sources) ? sources : 'web';
+  const custom = String(query || '').trim();
+  const queries = custom ? [custom] : buildRelatedQueries(a);
+  // 只看网页时走轻量快查（单页）；选了公众号 / 全部来源才动用多源，耗时会长一些
+  const light = src === 'web';
+  const self = String(a.finalUrl || a.url || '').split('#')[0];
+  // 几个检索词并行跑（同一源内部仍有互斥锁排队，不会对单个站点连击）
+  const groups = await Promise.all(
+    queries.map(async (q) => {
+      try {
+        const r = await searchWeb(q, { max: light ? 8 : 12, sources: src, pages: light ? 1 : 2, timeRange, sortBy, recent: !light });
+        // 把文章自己从相关结果里剔掉
+        return { query: q, results: r.results.filter((x) => !self || String(x.url).split('#')[0] !== self), notes: r.notes || [] };
+      } catch (e) {
+        return { query: q, results: [], error: e.message };
+      }
+    })
+  );
+  ok(res, { queries, groups, sources: src, timeRange, sortBy });
 });
 
 /* ---------------- 监控 ---------------- */
@@ -696,7 +738,21 @@ app.get('/api/kb/note', (req, res) => {
 
 app.post('/api/kb/note/open', (req, res) => {
   try {
-    ok(res, kbOpenNote(String(req.body?.path || '')));
+    ok(res, kbOpenNote(String(req.body?.path || ''), String(req.body?.app || 'default')));
+  } catch (e) {
+    fail(res, e, 400);
+  }
+});
+
+// 打开方式：列出本机可用的浏览器 / 编辑器，按用户选择打开网页或笔记
+app.get('/api/open-with/apps', (req, res) => {
+  const { url, file } = listOpenApps();
+  ok(res, { url, file });
+});
+
+app.post('/api/open-with', (req, res) => {
+  try {
+    ok(res, openUrlWith(String(req.body?.url || ''), String(req.body?.app || 'default')));
   } catch (e) {
     fail(res, e, 400);
   }

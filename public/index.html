@@ -10,19 +10,36 @@
 </head>
 <body>
 <div class="bg-layer" id="bgLayer" hidden></div>
+<!-- 自绘顶栏：待办、左右两栏收起按钮都在最上面；桌面版右侧让出系统窗口按钮 -->
+<header class="titlebar" id="titlebar">
+  <div class="tb-group">
+    <div class="tb-logo" title="ArticleForge">AF</div>
+    <button class="tb-btn" id="tbMenu" title="菜单（文件 / 视图 / 帮助）">
+      <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg>
+    </button>
+    <button class="tb-btn" id="tbListToggle" title="收起 / 展开左侧资料库栏">
+      <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg>
+    </button>
+  </div>
+  <div class="tb-drag" id="tbTitle">ArticleForge</div>
+  <div class="tb-group">
+    <button class="tb-btn tb-todo" id="tbTodo" title="待办便签：记下没完成的事，可随意拖动、固定">
+      <svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
+      <span>待办</span><i class="rail-count" id="todoRailCount" hidden></i>
+    </button>
+    <button class="tb-btn" id="tbAiToggle" title="收起 / 展开右侧 AI 栏">
+      <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M14.5 4.5v15"/></svg>
+    </button>
+  </div>
+</header>
 <div class="app">
   <!-- 图标导航 -->
   <nav class="rail">
-    <div class="rail-logo">AF</div>
     <button class="rail-btn active" data-view="convert" title="转换">
       <svg viewBox="0 0 24 24"><path d="M4 4h10l6 6v10H4z"/><path d="M14 4v6h6"/></svg><span>转换</span>
     </button>
     <button class="rail-btn" data-view="search" title="检索">
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg><span>检索</span>
-    </button>
-    <button class="rail-btn" data-view="todo" title="待办便签：记下没完成的事，可随意拖动、固定">
-      <svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg><span>待办</span>
-      <i class="rail-count" id="todoRailCount" hidden></i>
     </button>
     <button class="rail-btn" data-view="watch" title="监控">
       <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 7h18s-3 0-3-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span>监控</span>
@@ -43,9 +60,6 @@
         <button class="todo-badge" id="todoBadge" title="点一下只看标记了「未完成」的文章" hidden>未完成 <b>0</b></button>
       </div>
       <div style="display:flex;align-items:center;gap:2px">
-        <button class="icon-btn" id="listCollapse" title="收起资料库栏（点左缘的「»」可再展开）">
-          <svg viewBox="0 0 24 24"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
-        </button>
         <button class="icon-btn" id="refreshLib" title="刷新">
           <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
         </button>
@@ -72,6 +86,24 @@
 
   <!-- 主区域 -->
   <main class="main">
+    <!-- 应用内阅读：检索结果 / 相关文章先在本软件里看，满意再收入资料库 -->
+    <div class="reader" id="reader" hidden>
+      <div class="reader-head">
+        <button class="btn sm ghost" id="readerClose" title="返回（Esc）">← 返回</button>
+        <div class="reader-title" id="readerTitle">加载中…</div>
+        <button class="btn sm" id="readerOutline" title="显示 / 隐藏标题大纲">大纲</button>
+        <button class="btn sm" id="readerWeb" title="在本软件窗口里打开网页原样">网页原样</button>
+        <button class="btn sm" id="readerBrowser" title="用浏览器打开">浏览器 ▾</button>
+        <button class="btn sm primary" id="readerSave">收入资料库</button>
+      </div>
+      <div class="reader-body">
+        <div class="reader-main">
+          <iframe id="readerFrame" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
+          <div class="reader-loading" id="readerLoading"><span class="spinner dark"></span><span id="readerLoadingText">正在提取正文…</span></div>
+        </div>
+        <aside class="doc-outline" id="readerToc" hidden></aside>
+      </div>
+    </div>
     <header class="topbar">
       <div class="doc-title" id="docTitle">未选择文章</div>
       <div class="topbar-actions" id="topbarActions"></div>
@@ -83,6 +115,9 @@
       <button class="tab" data-tab="related">相关文章</button>
       <div class="tabs-spacer"></div>
       <span class="zoom-hint">在正文中选中文字即可划词提问</span>
+      <button class="tab outline-toggle" id="outlineToggle" title="显示 / 隐藏右侧标题大纲（Obsidian 式）">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M8 12h12"/><path d="M12 18h8"/></svg> 大纲
+      </button>
     </div>
 
     <section class="view" id="viewConvert">
@@ -97,6 +132,7 @@
         </div>
       </div>
       <div class="preview-wrap" id="previewWrap" hidden>
+       <div class="preview-main">
         <iframe id="previewFrame" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
         <div class="preview-empty" id="previewEmpty" hidden>
           <div class="pe-title">正文没有加载出来</div>
@@ -108,7 +144,33 @@
         </div>
         <div class="md-view" id="mdView" hidden><pre id="mdSource"></pre></div>
         <div class="outline-view" id="outlineView" hidden></div>
-        <div class="related-view" id="relatedView" hidden></div>
+        <div class="related-view" id="relatedView" hidden>
+          <div class="rel-bar">
+            <input id="relQuery" type="text" placeholder="检索词（留空 = 按标题 / 标签自动生成）">
+            <select id="relSource" title="来源">
+              <option value="web" selected>网页（快）</option>
+              <option value="wechat">微信公众号</option>
+              <option value="all">全部来源</option>
+              <option value="intel">安全情报</option>
+            </select>
+            <select id="relTime" title="时间范围">
+              <option value="" selected>不限时间</option>
+              <option value="day">24 小时内</option>
+              <option value="week">一周内</option>
+              <option value="month">一个月内</option>
+              <option value="3month">三个月内</option>
+              <option value="year">一年内</option>
+            </select>
+            <select id="relSort" title="排序">
+              <option value="relevance" selected>按相关度</option>
+              <option value="time">按时间（新→旧）</option>
+            </select>
+            <button class="btn sm primary" id="relGo">检索</button>
+          </div>
+          <div id="relResults"></div>
+        </div>
+       </div>
+       <aside class="doc-outline" id="docOutline" hidden></aside>
       </div>
     </section>
 
@@ -246,9 +308,6 @@
         <span class="ai-dot" id="aiDot"></span> AI 阅读助手
         <span class="ai-model" id="aiModel">未配置</span>
       </div>
-      <button class="icon-btn" id="aiCollapse" title="收起 AI 栏（点右缘的「«」可再展开）">
-        <svg viewBox="0 0 24 24"><path d="m13 17 5-5-5-5"/><path d="m6 17 5-5-5-5"/></svg>
-      </button>
       <button class="icon-btn" id="clearChat" title="清空对话">
         <svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>
       </button>
@@ -281,9 +340,8 @@
 <!-- 便签浮层：便签可以拖出待办板，漂浮在窗口任意位置，切页面也一直可见 -->
 <div class="note-float" id="noteFloat" hidden></div>
 
-<!-- 收起的侧栏在窗口边缘留一个小拉手（Obsidian 式） -->
-<button class="pane-tab" id="listTab" title="展开资料库栏" hidden>»</button>
-<button class="pane-tab right" id="aiTab" title="展开 AI 栏" hidden>«</button>
+<!-- 「查看方式」弹出菜单 -->
+<div class="pop-menu" id="popMenu" hidden></div>
 
 <!-- 划词浮条 -->
 <div class="sel-toolbar" id="selToolbar" hidden>

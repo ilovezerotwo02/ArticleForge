@@ -878,3 +878,145 @@ body.has-bg .pane-tab { background: rgba(255, 255, 255, calc(var(--panel-a, 0.66
 
 /* 背景层级修复：.app 整体压在背景层上，页面内容不再被背景盖住 */
 .app { position: relative; z-index: 1; }
+
+/* ============ v1.0.7 自绘顶栏：待办 / 两侧收起都在最上面 ============ */
+:root { --tb-h: 38px; --tb-right: 0px; }
+body.desktop { --tb-right: 140px; }
+.titlebar {
+  height: var(--tb-h); display: flex; align-items: center; gap: 6px;
+  padding: 0 calc(10px + var(--tb-right)) 0 10px; position: relative; z-index: 70;
+  background: #eef0f4; border-bottom: 1px solid var(--line); user-select: none;
+  -webkit-app-region: drag;
+}
+.titlebar .tb-group { display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
+.tb-logo {
+  width: 24px; height: 24px; border-radius: 7px; margin-right: 6px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff;
+  font-weight: 800; font-size: 10.5px; display: grid; place-items: center;
+}
+.tb-btn {
+  height: 28px; min-width: 30px; padding: 0 7px; border: 0; border-radius: 7px; background: transparent;
+  color: var(--ink-3); display: inline-flex; align-items: center; gap: 5px; font-size: 12px; position: relative;
+}
+.tb-btn:hover { background: rgba(0, 0, 0, .06); color: var(--ink); }
+.tb-btn.on { color: var(--brand); }
+.tb-btn.off { color: var(--ink-4); }
+.tb-btn svg { width: 17px; height: 17px; }
+.tb-btn.tb-todo.active { background: var(--brand-soft); color: var(--brand); }
+.tb-btn .rail-count { position: static; box-shadow: none; margin-left: 2px; }
+.tb-drag {
+  flex: 1; min-width: 0; text-align: center; font-size: 12px; color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.app { height: calc(100vh - var(--tb-h)); }
+.rail { padding-top: 12px; }
+.main { position: relative; }
+body.has-bg .titlebar { background: rgba(255, 255, 255, calc(var(--panel-a, 0.66) * 0.9)); backdrop-filter: blur(3px); }
+
+/* ============ Obsidian 式标题大纲（排版预览 / 应用内阅读 / 知识库共用） ============ */
+.preview-wrap { display: flex; }
+.preview-main { flex: 1; min-width: 0; position: relative; }
+.doc-outline {
+  flex: 0 0 260px; width: 260px; border-left: 1px solid var(--line); background: var(--panel-2);
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+}
+.ot-head {
+  display: flex; align-items: center; gap: 4px; padding: 8px 8px 6px 14px; flex: 0 0 auto;
+  font-size: 12px; font-weight: 650; color: var(--ink-3);
+}
+.ot-head .ot-title { flex: 1; }
+.ot-head .ot-n { font-weight: 500; color: var(--ink-4); margin-left: 4px; }
+.ot-head button {
+  border: 0; background: transparent; color: var(--ink-4); width: 24px; height: 24px; border-radius: 6px;
+  display: grid; place-items: center; padding: 0;
+}
+.ot-head button:hover { background: rgba(0, 0, 0, .06); color: var(--ink); }
+.ot-head button svg { width: 15px; height: 15px; }
+.ot-body { flex: 1; overflow: auto; padding: 2px 8px 16px 6px; }
+.ot-row {
+  display: flex; align-items: flex-start; gap: 2px; padding: 3px 6px 3px 0; border-radius: 6px;
+  font-size: 13px; line-height: 1.55; color: var(--ink-2); cursor: pointer;
+}
+.ot-row:hover { background: rgba(0, 0, 0, .045); color: var(--ink); }
+.ot-row.active { color: var(--brand); background: var(--brand-soft); font-weight: 600; }
+.ot-tw {
+  flex: 0 0 18px; height: 20px; display: grid; place-items: center; color: var(--ink-4);
+  border-radius: 4px; transition: transform .12s;
+}
+.ot-tw svg { width: 12px; height: 12px; stroke-width: 2.2; }
+.ot-tw:hover { color: var(--ink); }
+.ot-node.collapsed > .ot-row .ot-tw { transform: rotate(-90deg); }
+.ot-node.collapsed > .ot-kids { display: none; }
+.ot-text { min-width: 0; word-break: break-word; }
+/* 子级的竖向缩进引导线（Obsidian 那条） */
+.ot-kids { margin-left: 9px; padding-left: 8px; border-left: 1px solid #dcdfe6; }
+.ot-node.lv-top > .ot-row { font-weight: 550; }
+.ot-empty { padding: 14px; font-size: 12px; color: var(--ink-4); }
+.outline-toggle { display: inline-flex; align-items: center; gap: 4px; }
+.outline-toggle svg { width: 15px; height: 15px; }
+.outline-toggle.on { color: var(--brand); }
+
+/* 知识库：目录作为阅读器右侧一栏，不再是浮层 */
+.kb-browser.has-toc { grid-template-columns: 300px minmax(0, 1fr) 250px; }
+.kb-toc {
+  position: static; width: auto; max-height: 600px; top: auto; right: auto; box-shadow: none;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); padding: 0;
+}
+body.has-bg .kb-toc { background: rgba(255, 255, 255, calc(var(--panel-a, 0.66) * 0.7)); }
+
+/* ============ 相关文章：来源 / 时间 / 排序 ============ */
+.rel-bar {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 16px;
+  position: sticky; top: -26px; z-index: 2; padding: 10px 0; background: inherit;
+}
+.rel-bar input { flex: 1 1 220px; height: 32px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; font-size: 12.5px; background: #fff; outline: none; }
+.rel-bar input:focus { border-color: #b9bdf5; }
+.rel-bar select { height: 32px; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 0 8px; font-size: 12.5px; }
+.rel-note { font-size: 11.5px; color: var(--ink-4); margin: -2px 0 8px; }
+.r-actions { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+
+/* ============ 应用内阅读 ============ */
+.reader {
+  position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--panel);
+}
+.reader-head {
+  display: flex; align-items: center; gap: 7px; padding: 0 14px; height: 50px; flex: 0 0 50px;
+  border-bottom: 1px solid var(--line); background: var(--panel-2);
+}
+.reader-title { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reader-body { flex: 1; min-height: 0; display: flex; }
+.reader-main { flex: 1; min-width: 0; position: relative; }
+#readerFrame { width: 100%; height: 100%; border: 0; background: #fff; }
+.reader-loading {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px;
+  color: var(--ink-3); font-size: 13px; background: inherit;
+}
+.reader-loading[hidden] { display: none; }
+.spinner.dark { border-color: rgba(79, 70, 229, .25); border-top-color: var(--brand); }
+body.has-bg .reader { background: rgba(255, 255, 255, calc(var(--panel-a, 0.66) * 0.55)); }
+body.has-bg .reader-head { background: rgba(255, 255, 255, calc(var(--panel-a, 0.66) * 0.9)); }
+body.has-bg #readerFrame { background: transparent; }
+
+/* ============ 弹出菜单（查看方式 / 打开方式） ============ */
+.pop-menu {
+  position: fixed; z-index: 120; min-width: 210px; padding: 5px; border-radius: 10px;
+  background: #fff; border: 1px solid var(--line); box-shadow: var(--shadow-lg);
+}
+.pop-menu .pm-label { font-size: 10.5px; color: var(--ink-4); padding: 6px 10px 3px; }
+.pop-menu button {
+  display: flex; width: 100%; align-items: center; gap: 8px; text-align: left; border: 0; background: transparent;
+  padding: 7px 10px; border-radius: 7px; font-size: 12.5px; color: var(--ink-2);
+}
+.pop-menu button:hover { background: var(--brand-soft); color: var(--brand); }
+.pop-menu button small { margin-left: auto; color: var(--ink-4); font-size: 10.5px; }
+.pop-menu hr { border: 0; border-top: 1px solid var(--line-2); margin: 4px 2px; }
+
+/* ============ 背景修复：转换页正文透出自定义背景 ============ */
+body.has-bg #viewConvert,
+body.has-bg #previewFrame { background: transparent; }
+body.has-bg .view-tabs { background: rgba(255, 255, 255, calc(var(--panel-a, 0.66) * 0.75)); }
+body.has-bg .tab.active { background: rgba(255, 255, 255, 0.9); }
+body.has-bg .doc-outline { background: rgba(255, 255, 255, calc(var(--panel-a, 0.66) * 0.7)); backdrop-filter: blur(3px); }
+body.has-bg .rel-bar input, body.has-bg .rel-bar select { background: rgba(255, 255, 255, 0.92); }
+body.has-bg .rel-bar { background: transparent; }
+@media (max-width: 1180px) { .doc-outline { flex-basis: 220px; width: 220px; } }

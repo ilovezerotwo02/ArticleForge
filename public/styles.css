@@ -1507,3 +1507,36 @@ body.has-bg .toast { background: rgba(24, 24, 27, .94); }
 .annot-bar .ab-done { background: var(--ink); color: #fff; padding: 0 12px; margin-left: 4px; font-weight: 500; }
 .annot-bar .ab-done:hover { background: #27272a; color: #fff; }
 .btn[data-annot-toggle].on { background: var(--ink); border-color: var(--ink); color: #fff; }
+
+/* 批注工具条 v2：不换行（按内容定宽）、自定义颜色、尺寸滑块 */
+.annot-bar { width: max-content; max-width: calc(100vw - 16px); white-space: nowrap; flex-wrap: nowrap; }
+.annot-bar button, .annot-bar .ab-group, .annot-bar .ab-sep { flex: 0 0 auto; }
+.annot-bar button span { white-space: nowrap; }
+.annot-bar .ab-group { display: flex; align-items: center; gap: 2px; }
+.annot-bar .ab-group.off { opacity: .35; pointer-events: none; }
+.annot-bar .ab-custom {
+  position: relative; width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; cursor: pointer;
+}
+.annot-bar .ab-custom:hover { background: var(--raised); }
+.annot-bar .ab-custom::before {
+  content: ""; width: 14px; height: 14px; border-radius: 50%;
+  background: conic-gradient(#e5484d, #f5a524, #facc15, #4cc38a, #3b82f6, #8b5cf6, #e5484d);
+}
+.annot-bar .ab-custom.on::before { background: var(--c); box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--c); }
+.annot-bar .ab-custom input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; border: 0; padding: 0; }
+.annot-bar .ab-range { padding: 0 4px; gap: 8px; }
+.annot-bar .ab-label { font-size: 12px; color: var(--ink-3); }
+.annot-bar .ab-val { font: 500 12px/1 var(--font-mono); color: var(--ink); min-width: 18px; text-align: right; }
+.annot-bar input[type=range] { width: 96px; accent-color: var(--ink); margin: 0; }
+
+/* 知识库窄窗口：大纲改为浮在阅读区右上的面板，目录变窄，保证正文至少有可读宽度 */
+.kb-card { container-type: inline-size; }
+@container (max-width: 1000px) {
+  .kb-browser { grid-template-columns: 220px minmax(0, 1fr); }
+  .kb-browser.has-toc { grid-template-columns: 220px minmax(0, 1fr); }
+  .kb-browser.no-tree, .kb-browser.no-tree.has-toc { grid-template-columns: minmax(0, 1fr); }
+  .kb-card .kb-toc {
+    position: absolute; right: 16px; top: auto; bottom: 16px; width: 240px; height: auto; max-height: 45%;
+    z-index: 6; box-shadow: var(--shadow-lg); background: var(--panel);
+  }
+}

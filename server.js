@@ -55,7 +55,7 @@ app.get('/api/status', (req, res) => {
     counts: { articles: listArticles().length, watches: watchStore.list().length },
     presets: Object.entries(FORMAT_PRESETS).map(([key, v]) => ({ key, ...v })),
     ui: s.ui || {},
-    version: '1.1.1',
+    version: '1.1.2',
   });
 });
 
@@ -119,12 +119,27 @@ app.put('/api/annotations', (req, res) => {
     const key = annotKey(req.body?.key);
     const raw = Array.isArray(req.body?.strokes) ? req.body.strokes : [];
     // 只收合法笔迹：颜色 / 粗细 / 点列，坐标取整，限制数量防止文件无限膨胀
-    const strokes = raw.slice(0, 3000).map((s) => ({
-      c: /^#[0-9a-f]{6}$/i.test(s?.c) ? s.c : '#b42318',
-      s: Math.min(40, Math.max(1, Number(s?.s) || 2)),
-      h: Boolean(s?.h),
-      p: (Array.isArray(s?.p) ? s.p : []).slice(0, 4000).map((pt) => [Math.round(Number(pt?.[0]) || 0), Math.round(Number(pt?.[1]) || 0)]),
-    })).filter((s) => s.p.length);
+    const color = (c) => (/^#[0-9a-f]{6}$/i.test(c) ? c : '#b42318');
+    const strokes = raw.slice(0, 3000).map((s) => {
+      // 文字批注
+      if (s?.t === 1) {
+        return {
+          t: 1,
+          x: Math.round(Number(s.x) || 0),
+          y: Math.round(Number(s.y) || 0),
+          c: color(s.c),
+          f: Math.min(72, Math.max(10, Number(s.f) || 18)),
+          text: String(s.text || '').slice(0, 2000),
+        };
+      }
+      // 笔画
+      return {
+        c: color(s?.c),
+        s: Math.min(40, Math.max(1, Number(s?.s) || 2)),
+        h: Boolean(s?.h),
+        p: (Array.isArray(s?.p) ? s.p : []).slice(0, 4000).map((pt) => [Math.round(Number(pt?.[0]) || 0), Math.round(Number(pt?.[1]) || 0)]),
+      };
+    }).filter((s) => (s.t === 1 ? s.text.trim() : s.p.length));
     ok(res, annotStore.set(key, { w: Math.round(Number(req.body?.w) || 0), strokes }));
   } catch (e) {
     fail(res, e);
